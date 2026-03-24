@@ -1,3 +1,6 @@
-nfc
+fastapi
+uvicorn
+nfcpy
 requests
 python-dotenv
+libusb1
