@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-api_url = os.getenv("API_URL")
+api_url = os.getenv("API_URL")  # 例: http://サーバIP:8000/analog
 
 last_tag_id = None
 
@@ -30,7 +30,6 @@ def on_connect(tag):
 
     data = {
         "tag_id": send_id,
-        "confidence": 1.0,
         "timestamp": datetime.now().isoformat()
     }
 
@@ -47,6 +46,5 @@ clf = nfc.ContactlessFrontend('usb')
 
 print("タッチしてください...")
 
-# 👇 ここが重要（無限ループ）
 while True:
     clf.connect(rdwr={'on-connect': on_connect})
