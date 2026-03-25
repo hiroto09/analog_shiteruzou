@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-api_url = os.getenv("API_URL")  # 例: http://サーバIP:8000/analog
+api_url = os.getenv("API_URL") 
 
 last_tag_id = None
 
