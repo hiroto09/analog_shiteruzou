@@ -1,6 +1,8 @@
-fastapi
-uvicorn
-nfcpy
-requests
-python-dotenv
-libusb1
+# NFC用
+nfcpy==1.0.4
+
+# HTTPリクエスト
+requests>=2.31.0
+
+# WebSocketクライアント
+websockets>=11.0.3
