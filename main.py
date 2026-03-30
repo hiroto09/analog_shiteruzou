@@ -1,4 +1,3 @@
-# main.py
 import nfc
 import requests
 from datetime import datetime
@@ -6,13 +5,20 @@ import threading
 import asyncio
 import websockets
 import json
+import os
 
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 import uvicorn
+from dotenv import load_dotenv
 
-API_URL = "http://<ホストサーバーIP>:8000/analog"
-WS_URL = "ws://<ホストサーバーIP>:8000/ws"
+# --------------------
+# .env 読み込み
+# --------------------
+load_dotenv()
+
+API_URL = os.getenv("API_URL")
+WS_URL = os.getenv("WS_URL")
 
 last_tag_id = None
 state_analog = "起動中..."
@@ -49,7 +55,7 @@ def nfc_loop():
         clf.connect(rdwr={'on-connect': on_connect})
 
 # --------------------
-# WebSocket受信（サーバーから状態取得）
+# WebSocket受信
 # --------------------
 async def ws_loop():
     global state_analog
@@ -65,7 +71,7 @@ async def ws_loop():
             await asyncio.sleep(1)
 
 # --------------------
-# HTML（直接返す）
+# HTML
 # --------------------
 @app.get("/")
 def index():
