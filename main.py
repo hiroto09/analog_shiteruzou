@@ -1,4 +1,4 @@
-# nfc_ws_client.py
+# main.py
 import nfc
 import requests
 from datetime import datetime
@@ -7,11 +7,17 @@ import asyncio
 import websockets
 import json
 
+from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
+import uvicorn
+
 API_URL = "http://<ホストサーバーIP>:8000/analog"
 WS_URL = "ws://<ホストサーバーIP>:8000/ws"
 
 last_tag_id = None
 state_analog = "起動中..."
+
+app = FastAPI()
 
 # --------------------
 # NFC送信
@@ -23,7 +29,10 @@ def on_connect(tag):
     send_id = "0" if tag_id == last_tag_id else tag_id
     last_tag_id = None if send_id == "0" else tag_id
 
-    data = {"tag_id": send_id, "timestamp": datetime.now().isoformat()}
+    data = {
+        "tag_id": send_id,
+        "timestamp": datetime.now().isoformat()
+    }
 
     try:
         res = requests.post(API_URL, json=data)
@@ -35,11 +44,12 @@ def on_connect(tag):
 
 def nfc_loop():
     clf = nfc.ContactlessFrontend('usb')
+    print("NFC待機中...")
     while True:
         clf.connect(rdwr={'on-connect': on_connect})
 
 # --------------------
-# WebSocketで受信してHTMLに反映
+# WebSocket受信（サーバーから状態取得）
 # --------------------
 async def ws_loop():
     global state_analog
@@ -50,38 +60,60 @@ async def ws_loop():
                     data = json.loads(message)
                     state_analog = data.get("analog", "不明")
                     print("最新analog:", state_analog)
-                    update_html(state_analog)
         except Exception as e:
-            print("WS切断、再接続します:", e)
+            print("WS切断、再接続:", e)
             await asyncio.sleep(1)
 
 # --------------------
-# HTML更新
+# HTML（直接返す）
 # --------------------
-def update_html(analog):
-    with open("/var/www/html/index.html", "w", encoding="utf-8") as f:
-        f.write(f"""
+@app.get("/")
+def index():
+    return HTMLResponse(f"""
 <!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8">
 <style>
-body {{ background: black; color: white; font-size: 140px; text-align: center; margin-top: 20%; font-family: sans-serif; }}
+body {{
+  background: black;
+  color: white;
+  font-size: 140px;
+  text-align: center;
+  margin-top: 20%;
+  font-family: sans-serif;
+}}
 </style>
 </head>
 <body>
-<div id="analog">🃏 {analog}</div>
+
+<div id="analog">🃏 {state_analog}</div>
+
+<script>
+const ws = new WebSocket("{WS_URL}");
+
+ws.onmessage = (event) => {{
+  const data = JSON.parse(event.data);
+  document.getElementById("analog").innerText = "🃏 " + data.analog;
+}};
+
+ws.onclose = () => {{
+  setTimeout(() => location.reload(), 1000);
+}};
+</script>
+
 </body>
 </html>
 """)
 
 # --------------------
-# スレッドとメイン
+# 起動
 # --------------------
-threading.Thread(target=nfc_loop, daemon=True).start()
+def start():
+    threading.Thread(target=nfc_loop, daemon=True).start()
+    threading.Thread(target=lambda: asyncio.run(ws_loop()), daemon=True).start()
 
-# 初回HTML書き込み
-update_html(state_analog)
+    uvicorn.run(app, host="0.0.0.0", port=8001)
 
-# WebSocketループ
-asyncio.run(ws_loop())
+if __name__ == "__main__":
+    start()
