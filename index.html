@@ -1,35 +1,15 @@
 <!DOCTYPE html>
 <html>
-<head>
-<meta charset="UTF-8">
-<style>
-body {
-  background: black;
-  color: white;
-  font-size: 140px;
-  text-align: center;
-  margin-top: 20%;
-  font-family: sans-serif;
-}
-</style>
-</head>
-<body>
-
-<div id="analog">🃏 起動中...</div>
+<body style="background:black;color:white;font-size:50px;text-align:center;margin-top:20%;">
+<div id="game">接続中...</div>
 
 <script>
 const ws = new WebSocket("ws://192.168.200.150:8000/ws");
 
 ws.onmessage = (event) => {
-  const data = JSON.parse(event.data);
-  document.getElementById("analog").innerText = "🃏 " + data.analog;
-};
-
-// 切断時リロード
-ws.onclose = () => {
-  setTimeout(() => location.reload(), 1000);
+    const data = JSON.parse(event.data);
+    document.getElementById("game").innerText = data.analog;
 };
 </script>
-
 </body>
 </html>
