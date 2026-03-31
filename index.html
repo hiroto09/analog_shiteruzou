@@ -1,15 +1,71 @@
 <!DOCTYPE html>
 <html>
-<body style="background:black;color:white;font-size:50px;text-align:center;margin-top:20%;">
-<div id="game">接続中...</div>
+<head>
+<meta charset="UTF-8">
+<title>NFC状態</title>
+
+<style>
+body {
+    font-family: sans-serif;
+    text-align: center;
+    margin-top: 100px;
+}
+
+#status {
+    font-size: 48px;
+    font-weight: bold;
+}
+
+.off {
+    color: gray;
+}
+
+.on {
+    color: green;
+}
+</style>
+
+</head>
+
+<body>
+
+<h1>現在の状態</h1>
+<div id="status" class="off">接続中...</div>
 
 <script>
-const ws = new WebSocket("ws://192.168.200.150:8000/ws");
+const WS_URL = "ws://192.168.200.150:8000/ws";
 
-ws.onmessage = (event) => {
-    const data = JSON.parse(event.data);
-    document.getElementById("game").innerText = data.analog;
+const statusEl = document.getElementById("status");
+
+const ws = new WebSocket(WS_URL);
+
+ws.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+
+    const text = data.analog;
+
+    statusEl.innerText = text;
+
+    // 🔥 見た目切り替え
+    if (text === "何もしてない") {
+        statusEl.className = "off";
+    } else {
+        statusEl.className = "on";
+    }
+};
+
+ws.onopen = () => {
+    console.log("接続成功");
+};
+
+ws.onerror = () => {
+    statusEl.innerText = "接続エラー";
+};
+
+ws.onclose = () => {
+    statusEl.innerText = "切断";
 };
 </script>
+
 </body>
 </html>
