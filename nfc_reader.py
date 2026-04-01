@@ -10,16 +10,16 @@ load_dotenv()
 API_URL = os.getenv("API_URL")
 
 last_tag_id = None
-last_read_time = 0   # ← 追加
+is_on = False  # ← 状態追加
+last_read_time = 0
 
-COOLDOWN = 2  # 秒
+COOLDOWN = 2
 
 def on_connect(tag):
-    global last_tag_id, last_read_time
+    global last_tag_id, is_on, last_read_time
 
     now = time.time()
 
-    # 🔒 クールダウン中なら無視
     if now - last_read_time < COOLDOWN:
         print("⏳ クールダウン中...")
         return True
@@ -27,15 +27,17 @@ def on_connect(tag):
     tag_id = tag.identifier.hex()
     print("検出:", tag_id)
 
-    # トグル判定
-    if tag_id == last_tag_id:
-        send_id = "0"
-        print("→ 同じカードなのでOFF")
-        last_tag_id = None
-    else:
+    # 🎯 トグル処理
+    if not is_on:
         send_id = tag_id
-        print("→ 新しいカードなのでON")
+        print("→ ON")
+        is_on = True
         last_tag_id = tag_id
+    else:
+        send_id = "0"
+        print("→ OFF")
+        is_on = False
+        last_tag_id = None  # ← リセット重要
 
     # サーバー送信
     requests.post(API_URL, json={
@@ -43,7 +45,6 @@ def on_connect(tag):
         "timestamp": datetime.now().isoformat()
     })
 
-    # ⏱ 最終読み取り時間を更新
     last_read_time = now
 
     return True
@@ -54,7 +55,7 @@ def on_release(tag):
     pass
 
 
-clf = nfc.ContactlessFrontend('usb')
+clf = nfc.ContactlessFrontend('usb:054c:06c3')  # ← これも忘れずに
 
 print("NFC待機中...")
 
