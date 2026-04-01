@@ -4,16 +4,26 @@ from datetime import datetime
 import os
 from dotenv import load_dotenv
 import time
+import threading
 
 load_dotenv()
 
 API_URL = os.getenv("API_URL")
 
 last_tag_id = None
-is_on = False  # ← 状態追加
+is_on = False
 last_read_time = 0
 
 COOLDOWN = 2
+
+def send_to_server(send_id):
+    try:
+        requests.post(API_URL, json={
+            "tag_id": send_id,
+            "timestamp": datetime.now().isoformat()
+        }, timeout=2)
+    except Exception as e:
+        print("送信エラー:", e)
 
 def on_connect(tag):
     global last_tag_id, is_on, last_read_time
@@ -27,7 +37,6 @@ def on_connect(tag):
     tag_id = tag.identifier.hex()
     print("検出:", tag_id)
 
-    # 🎯 トグル処理
     if not is_on:
         send_id = tag_id
         print("→ ON")
@@ -37,29 +46,28 @@ def on_connect(tag):
         send_id = "0"
         print("→ OFF")
         is_on = False
-        last_tag_id = None  # ← リセット重要
+        last_tag_id = None
 
-    # サーバー送信
-    requests.post(API_URL, json={
-        "tag_id": send_id,
-        "timestamp": datetime.now().isoformat()
-    })
+    # 非同期送信
+    threading.Thread(target=send_to_server, args=(send_id,)).start()
 
     last_read_time = now
 
     return True
 
-
 def on_release(tag):
     print("カード離れた")
-    pass
 
-
-clf = nfc.ContactlessFrontend('usb:054c:06c3')  # ← これも忘れずに
+clf = nfc.ContactlessFrontend('usb:054c:06c3')
 
 print("NFC待機中...")
 
-clf.connect(rdwr={
-    'on-connect': on_connect,
-    'on-release': on_release
-})
+while True:
+    try:
+        clf.connect(rdwr={
+            'on-connect': on_connect,
+            'on-release': on_release
+        })
+    except Exception as e:
+        print("NFCエラー:", e)
+        time.sleep(1)
