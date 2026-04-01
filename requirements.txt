@@ -1,0 +1,3 @@
+nfcpy==1.0.4
+requests
+python-dotenv
