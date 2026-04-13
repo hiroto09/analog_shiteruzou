@@ -9,9 +9,6 @@ import threading
 load_dotenv()
 
 API_URL = os.getenv("API_URL")
-
-last_tag_id = None
-is_on = False
 last_read_time = 0
 
 COOLDOWN = 2
@@ -26,7 +23,7 @@ def send_to_server(send_id):
         print("送信エラー:", e)
 
 def on_connect(tag):
-    global last_tag_id, is_on, last_read_time
+    global last_read_time
 
     now = time.time()
 
@@ -37,23 +34,12 @@ def on_connect(tag):
     tag_id = tag.identifier.hex()
     print("検出:", tag_id)
 
-    if not is_on:
-        send_id = tag_id
-        print("→ ON")
-        is_on = True
-        last_tag_id = tag_id
-    else:
-        send_id = "0"
-        print("→ OFF")
-        is_on = False
-        last_tag_id = None
-
-    # 非同期送信
-    threading.Thread(target=send_to_server, args=(send_id,)).start()
-
+    # 常にタグID送信
+    threading.Thread(target=send_to_server, args=(tag_id,)).start()
     last_read_time = now
 
     return True
+
 
 def on_release(tag):
     print("カード離れた")
@@ -61,6 +47,7 @@ def on_release(tag):
 clf = nfc.ContactlessFrontend('usb:054c:06c3')
 
 print("NFC待機中...")
+
 
 while True:
     try:
