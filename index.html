@@ -1,71 +1,94 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
-<head>
-<meta charset="UTF-8">
-<title>NFC状態</title>
+  <head>
+    <meta charset="UTF-8" />
+    <title>NFC状態</title>
 
-<style>
-body {
-    font-family: sans-serif;
-    text-align: center;
-    margin-top: 100px;
-}
+    <style>
+      body {
+        font-family: sans-serif;
+        text-align: center;
+        margin-top: 100px;
+      }
 
-#status {
-    font-size: 48px;
-    font-weight: bold;
-}
+      #status {
+        font-size: 48px;
+        font-weight: bold;
+      }
 
-.off {
-    color: gray;
-}
+      .off {
+        color: gray;
+      }
 
-.on {
-    color: green;
-}
-</style>
+      .on {
+        color: green;
+      }
+    </style>
+  </head>
 
-</head>
+  <body>
+    <h1>現在の状態</h1>
+    <div id="status" class="off">接続中...</div>
 
-<body>
+    <!-- 追加：ユーザー一覧表示エリア -->
+    <table id="users" border="1" style="margin: 30px auto; display: none">
+      <thead>
+        <tr>
+          <th>ユーザー名</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
 
-<h1>現在の状態</h1>
-<div id="status" class="off">接続中...</div>
+    <script>
+      const WS_URL = "ws://192.168.200.150:8000/ws";
 
-<script>
-const WS_URL = "ws://192.168.200.150:8000/ws";
+      const statusEl = document.getElementById("status");
+      const table = document.getElementById("users");
+      const tbody = table.querySelector("tbody");
 
-const statusEl = document.getElementById("status");
+      const ws = new WebSocket(WS_URL);
 
-const ws = new WebSocket(WS_URL);
+      ws.onmessage = (e) => {
+        const data = JSON.parse(e.data);
 
-ws.onmessage = (e) => {
-    const data = JSON.parse(e.data);
+        const text = data.analog;
+        const users = data.users;
 
-    const text = data.analog;
+        statusEl.innerText = text;
 
-    statusEl.innerText = text;
+        if (text === "何もしてない") {
+          statusEl.className = "off";
+          table.style.display = "none";
+        } else {
+          statusEl.className = "on";
+          table.style.display = "table";
 
-    // 🔥 見た目切り替え
-    if (text === "何もしてない") {
-        statusEl.className = "off";
-    } else {
-        statusEl.className = "on";
-    }
-};
+          tbody.innerHTML = "";
 
-ws.onopen = () => {
-    console.log("接続成功");
-};
+          users.forEach((name) => {
+            const tr = document.createElement("tr");
+            const td = document.createElement("td");
 
-ws.onerror = () => {
-    statusEl.innerText = "接続エラー";
-};
+            td.innerText = name;
 
-ws.onclose = () => {
-    statusEl.innerText = "切断";
-};
-</script>
+            tr.appendChild(td);
+            tbody.appendChild(tr);
+          });
+        }
+      };
 
-</body>
+      ws.onopen = () => {
+        console.log("接続成功");
+      };
+
+      ws.onerror = () => {
+        statusEl.innerText = "接続エラー";
+      };
+
+      ws.onclose = () => {
+        statusEl.innerText = "切断";
+      };
+    </script>
+  </body>
 </html>
