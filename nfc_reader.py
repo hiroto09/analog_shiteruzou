@@ -10,6 +10,7 @@ load_dotenv()
 
 API_URL = os.getenv("API_URL")
 last_read_time = 0
+last_tag_id = None
 
 COOLDOWN = 2
 
