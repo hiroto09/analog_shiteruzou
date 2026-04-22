@@ -23,7 +23,7 @@ def send_to_server(send_id):
         print("送信エラー:", e)
 
 def on_connect(tag):
-    global last_read_time
+    global last_read_time, last_tag_id
 
     now = time.time()
 
@@ -34,8 +34,18 @@ def on_connect(tag):
     tag_id = tag.identifier.hex()
     print("検出:", tag_id)
 
-    # 常にタグID送信
-    threading.Thread(target=send_to_server, args=(tag_id,)).start()
+    # 👇 ここがトグル処理
+    if tag_id == last_tag_id:
+        send_id = "00"
+        print("同じタグ → OFF送信")
+        last_tag_id = None  # リセット
+    else:
+        send_id = tag_id
+        last_tag_id = tag_id
+
+    # 送信
+    threading.Thread(target=send_to_server, args=(send_id,)).start()
+
     last_read_time = now
 
     return True
