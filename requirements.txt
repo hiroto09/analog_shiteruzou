@@ -1,3 +1,3 @@
-nfcpy==1.0.4
+nfcpy
 requests
 python-dotenv
