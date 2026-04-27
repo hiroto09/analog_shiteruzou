@@ -31,7 +31,7 @@ def send_to_server(send_id):
                 "tag_id": send_id,
                 "timestamp": datetime.now().isoformat()
             },
-            timeout=0.5  # 🔥 短めにする
+            timeout=3  # 🔥 短めにする
         )
 
         print("✅ status:", res.status_code)
