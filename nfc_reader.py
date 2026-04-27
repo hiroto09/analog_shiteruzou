@@ -4,6 +4,7 @@ from datetime import datetime
 import os
 from dotenv import load_dotenv
 import time
+import threading
 
 load_dotenv()
 
@@ -14,20 +15,23 @@ last_tag_id = None
 
 COOLDOWN = 2  # 秒
 
+# 🔥 セッション使い回し（高速＆安定）
+session = requests.Session()
+
 # =========================
-# サーバー送信
+# サーバー送信（非同期で呼ばれる）
 # =========================
 def send_to_server(send_id):
     try:
         print("📡 送信:", send_id)
 
-        res = requests.post(
+        res = session.post(
             API_URL,
             json={
                 "tag_id": send_id,
                 "timestamp": datetime.now().isoformat()
             },
-            timeout=1  # ← 短めで詰まり防止
+            timeout=0.5  # 🔥 短めにする
         )
 
         print("✅ status:", res.status_code)
@@ -42,29 +46,35 @@ def send_to_server(send_id):
 def on_connect(tag):
     global last_read_time, last_tag_id
 
-    print("🔵 on_connect 呼ばれた")
-
     now = time.time()
 
     # クールダウン
     if now - last_read_time < COOLDOWN:
-        print("⏳ クールダウン中...")
         return True
 
-    tag_id = tag.identifier.hex()
-    print("🔍 検出:", tag_id)
+    try:
+        tag_id = tag.identifier.hex()
+        print("🔍 検出:", tag_id)
+    except Exception as e:
+        print("❌ タグ読み取り失敗:", e)
+        return True
 
     # トグル処理
     if tag_id == last_tag_id:
         send_id = "00"
-        print("🔁 同じタグ → OFF")
         last_tag_id = None
+        print("🔁 OFF")
     else:
         send_id = tag_id
         last_tag_id = tag_id
+        print("🟢 ON")
 
-    # 👇 スレッド使わず同期で送信（安定）
-    send_to_server(send_id)
+    # 🔥 非同期送信（ここが超重要）
+    threading.Thread(
+        target=send_to_server,
+        args=(send_id,),
+        daemon=True
+    ).start()
 
     last_read_time = now
 
