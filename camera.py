@@ -1,11 +1,10 @@
 from picamera2 import Picamera2
-from picamera2.preview import Preview
 from time import sleep
 
 picam2 = Picamera2()
 
 # プレビュー開始
-picam2.start_preview(Preview.QTGL)
+picam2.start_preview()
 
 # カメラ開始
 picam2.start()
@@ -20,5 +19,4 @@ except KeyboardInterrupt:
     print("stop")
 
 finally:
-    picam2.stop_preview()
     picam2.stop()
