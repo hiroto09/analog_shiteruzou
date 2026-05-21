@@ -3,12 +3,17 @@ from time import sleep
 
 picam2 = Picamera2()
 
-# QTプレビュー
-picam2.start_preview(Preview.QT)
+# 正方形プレビュー設定
+config = picam2.create_preview_configuration(
+    main={"size": (640, 640)}
+)
 
+picam2.configure(config)
+
+picam2.start_preview(Preview.QT)
 picam2.start()
 
-print("camera preview start")
+print("square preview start")
 
 try:
     while True:
