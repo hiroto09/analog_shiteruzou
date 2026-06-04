@@ -9,7 +9,8 @@ import time
 # ==========================
 
 model = tf.keras.models.load_model(
-    "game_classifier_analog_v1.h5"
+    "game_classifier_analog_v1.h5",
+    compile=False
 )
 
 CLASS_NAMES = [
@@ -55,13 +56,11 @@ def predict_frame(frame):
 
     return game, score
 
-
 # ==========================
 # 20秒ごとに推定
 # ==========================
 
 try:
-
     while True:
 
         frame = picam2.capture_array()
