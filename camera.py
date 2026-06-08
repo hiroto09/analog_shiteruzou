@@ -9,7 +9,7 @@ import time
 # ==========================
 
 model = tf.keras.models.load_model(
-    "game_classifier_analog_v1.h5",
+    "game_classifier_analog_v1_fixed.h5",
     compile=False
 )
 
