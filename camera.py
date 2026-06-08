@@ -5,18 +5,26 @@ import cv2
 import time
 
 # ==========================
-# モデル読み込み
+# TFLiteモデル読み込み
 # ==========================
 
-model = tf.keras.models.load_model(
-    "game_classifier_analog_v1_fixed.h5",
-    compile=False
+interpreter = tf.lite.Interpreter(
+    model_path="game_classifier_analog_v1.tflite"
 )
 
+interpreter.allocate_tensors()
+
+input_details = interpreter.get_input_details()
+output_details = interpreter.get_output_details()
+
+# ==========================
+# クラス名
+# ==========================
+
 CLASS_NAMES = [
-    "class1",
-    "class2",
-    "class3"
+    "nanimoshitenai",
+    "ayaturi",
+    "katan"
 ]
 
 # ==========================
@@ -30,23 +38,35 @@ config = picam2.create_preview_configuration(
 )
 
 picam2.configure(config)
+
 picam2.start()
 
 print("camera started")
 
 # ==========================
-# 推定関数
+# 推論関数
 # ==========================
 
 def predict_frame(frame):
 
     img = cv2.resize(frame, (128, 128))
 
-    img = img.astype(np.float32) / 255.0
+    img = img.astype(np.float32)
+
+    img /= 255.0
 
     img = np.expand_dims(img, axis=0)
 
-    pred = model.predict(img, verbose=0)
+    interpreter.set_tensor(
+        input_details[0]["index"],
+        img
+    )
+
+    interpreter.invoke()
+
+    pred = interpreter.get_tensor(
+        output_details[0]["index"]
+    )
 
     idx = np.argmax(pred)
 
@@ -57,10 +77,11 @@ def predict_frame(frame):
     return game, score
 
 # ==========================
-# 20秒ごとに推定
+# 20秒ごと推論
 # ==========================
 
 try:
+
     while True:
 
         frame = picam2.capture_array()

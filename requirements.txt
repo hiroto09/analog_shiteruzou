@@ -1,9 +1,7 @@
 nfcpy
 requests
 python-dotenv
-
 picamera2
-
 tensorflow
 numpy
 opencv-python
