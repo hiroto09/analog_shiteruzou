@@ -9,7 +9,7 @@ import time
 # ==========================
 
 interpreter = tf.lite.Interpreter(
-    model_path="game_classifier_analog_v1.tflite"
+    model_path="game_classifier_analog_v2.tflite"
 )
 
 interpreter.allocate_tensors()
