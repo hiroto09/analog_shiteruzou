@@ -52,7 +52,7 @@ def predict_frame(frame):
     # BGRA → RGB
     frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2RGB)
 
-    img = cv2.resize(frame, (128, 128))
+    img = cv2.resize(frame, (224, 224))
 
     img = img.astype(np.float32) / 255.0
 
