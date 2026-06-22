@@ -3,6 +3,7 @@ import tensorflow as tf
 import numpy as np
 import cv2
 import time
+from collections import Counter
 
 # ==========================
 # TFLiteモデル読み込み
@@ -21,11 +22,12 @@ output_details = interpreter.get_output_details()
 # クラス名
 # ==========================
 
-CLASS_NAMES = [
-    "nanimoshitenai",
-    "ayaturi",
-    "katan"
-]
+CLASS_MAP = {
+    0: "何もしてない",
+    1: "操り人形",
+    2: "カタン",
+    3: "麻雀",
+}
 
 # ==========================
 # カメラ初期化
@@ -71,30 +73,51 @@ def predict_frame(frame):
 
     idx = np.argmax(pred)
 
-    game = CLASS_NAMES[idx]
+    game = CLASS_MAP.get(idx, "Unknown")
 
-    score = float(pred[0][idx])
+    return game
 
-    return game, score
 
 # ==========================
-# 20秒ごと推論
+# 2分間で9回推論
 # ==========================
+
+INTERVAL = 120 / 9  # 約13.3秒
 
 try:
 
     while True:
 
-        frame = picam2.capture_array()
+        results = []
 
-        game, score = predict_frame(frame)
+        print("=== 推定開始 ===")
 
-        print(
-            f"[{time.strftime('%H:%M:%S')}] "
-            f"{game} ({score:.1%})"
-        )
+        for i in range(9):
 
-        time.sleep(20)
+            frame = picam2.capture_array()
+
+            game = predict_frame(frame)
+
+            results.append(game)
+
+            print(
+                f"[{time.strftime('%H:%M:%S')}] "
+                f"{i+1}/9 : {game}"
+            )
+
+            # 最後は待たない
+            if i < 8:
+                time.sleep(INTERVAL)
+
+        # 最頻値を取得
+        counter = Counter(results)
+
+        final_game = counter.most_common(1)[0][0]
+
+        print("\n====================")
+        print("各推定結果:", results)
+        print("最終推定結果:", final_game)
+        print("====================\n")
 
 except KeyboardInterrupt:
     pass
