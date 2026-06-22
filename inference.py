@@ -145,9 +145,7 @@ try:
 
         results = []
 
-        print("\n====================")
         print("推定開始")
-        print("====================")
 
         for i in range(9):
 
@@ -160,12 +158,6 @@ try:
             # 結果保存
             results.append(game)
 
-            print(
-                f"[{time.strftime('%H:%M:%S')}] "
-                f"{i+1}/9 "
-                f"pred={game} "
-                f"conf={conf:.3f}"
-            )
 
             # 最後は待たない
             if i < 8:
