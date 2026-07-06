@@ -145,8 +145,6 @@ try:
 
         results = []
 
-        print("推定開始")
-
         for i in range(9):
 
             # カメラ取得
