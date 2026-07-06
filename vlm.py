@@ -135,7 +135,7 @@ def recognize_boardgame(image_path):
 ・宝石の煌めき
 
 候補にない場合は
-「不明」
+「何もしていない」
 と回答してください。
 
 回答は次の形式のみで出力してください。
@@ -226,15 +226,20 @@ try:
 
             print("Gemini推論中...")
 
-            result = recognize_boardgame(
-                "boardgame.jpg"
-            )
 
-            print(result)
+
+            result = recognize_boardgame("boardgame.jpg")
+
+            title = "何もしていない"
+
+            for line in result.splitlines():
+                if line.startswith("タイトル"):
+                    title = line.split(":", 1)[1].strip()
+                    break
 
             threading.Thread(
                 target=send_to_server,
-                args=(result,),
+                args=(title,),
                 daemon=True
             ).start()
 
