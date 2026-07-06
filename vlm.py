@@ -95,13 +95,17 @@ def recognize_boardgame(image_path):
 
     image = Image.open(image_path)
 
-    response = client.models.generate_content(
+    while True:
 
-        model="gemini-2.5-flash-lite",
+        try:
 
-        contents=[
-            image,
-            """
+            response = client.models.generate_content(
+
+                model="gemini-2.5-flash-lite",
+
+                contents=[
+                    image,
+                    """
 画像に写っているボードゲームを推定してください。
 
 以下の候補から最も近いものを1つ選んでください。
@@ -142,13 +146,27 @@ def recognize_boardgame(image_path):
 
 タイトル: ○○
 信頼度: ○%
-
 """
-        ]
+                ]
 
-    )
+            )
 
-    return response.text
+            return response.text
+
+        except Exception as e:
+
+            print("Geminiエラー")
+            print(e)
+
+            # 503なら30秒待って再試行
+            if "503" in str(e):
+                print("Geminiサーバーが混雑しています。30秒後に再試行します。")
+                time.sleep(30)
+                continue
+
+            # その他のエラーも10秒後に再試行
+            print("10秒後に再試行します。")
+            time.sleep(10)
 
 
 # ==========================================
