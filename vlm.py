@@ -12,6 +12,9 @@ from datetime import datetime
 from google import genai
 from PIL import Image
 
+
+
+
 # ==========================================
 # .env 読み込み
 # ==========================================
@@ -30,6 +33,7 @@ session = requests.Session()
 # ==========================================
 # Gemini
 # ==========================================
+
 
 client = genai.Client(
     api_key=GEMINI_API_KEY
@@ -106,49 +110,47 @@ def recognize_boardgame(image_path):
                 contents=[
                     image,
                     """
-画像に写っているボードゲームを推定してください。
+    画像に写っているボードゲームを推定してください。
 
-以下の候補から最も近いものを1つ選んでください。
+    以下の候補から最も近いものを1つ選んでください。
 
-候補
-・何もしていない
-・カタカナーシ
-・チェス
-・モダンアート
-・マーダーミステリー
-・UIかるた
-・カラーコードかるた
-・Linuxコマンドかるた
-・トランプ
-・お邪魔者
-・お邪魔者2
-・カタン（スタンダード）
-・カタン（大航海時代）
-・キャンプ場の殺人鬼
-・コヨーテ
-・犯人は踊る
-・犯人は踊る3
-・ファットプロジェクト
-・プログラム言語神経衰弱
-・テストプレイなんてしてないよ
-・まじかる★ベーカリー
-・ito
-・人狼
-・プロポーズ
-・麻雀
-・宝石の煌めき
+    候補
+    "01": "カタカナーシ", 
+    "02": "チェス", 
+    "03": "モダンアート", 
+    "04": "マーダーミステリー", 
+    "05": "UIかるた",
+    "06": "カラーコードかるた", 
+    "07": "Linuxコマンドかるた", 
+    "08": "トランプ", 
+    "09": "お邪魔者", 
+    "10": "カタン(大航海時代)", 
+    "11": "キャンプ場の殺人鬼", 
+    "12": "コヨーテ", 
+    "13": "犯人は踊る", 
+    "14": "犯人は踊る3", 
+    "15": "お邪魔者2", 
+    "16": "トランプ", 
+    "17": "ファットプロジェクト", 
+    "18": "プログラム言語神経衰弱", 
+    "19": "テストプレイなんてしてないよ", 
+    "20": "まじかる★ベーカリー", 
+    "21": "カタン(スタンダート)", 
+    "22": "カタン(スタンダート)", 
+    "23": "ito", 
+    "24": "人狼", 
+    "25": "プロポーズ", 
+    "26": "麻雀",
+    "27": "宝石の煌めき"
 
-候補にない場合は
-「何もしていない」
-と回答してください。
+    候補にない場合は 00 を返してください。
 
-回答は次の形式のみで出力してください。
+    回答は次の形式のみで出力してください。
 
-タイトル: ○○
-信頼度: ○%
+    id: 24
+    信頼度: 95%
 """
                 ]
-
             )
 
             return response.text
@@ -173,7 +175,7 @@ def recognize_boardgame(image_path):
 # API送信
 # ==========================================
 
-def send_to_server(result):
+def send_to_server(analog_id):
 
     try:
 
@@ -184,7 +186,7 @@ def send_to_server(result):
             API_URL,
 
             json={
-                "result": result,
+                "analog_id": analog_id,
                 "timestamp": datetime.now().isoformat()
             },
 
@@ -248,16 +250,23 @@ try:
 
             result = recognize_boardgame("boardgame.jpg")
 
-            title = "何もしていない"
+            analog_id = "00"
 
             for line in result.splitlines():
-                if line.startswith("タイトル"):
-                    title = line.split(":", 1)[1].strip()
+
+                if line.lower().startswith("id"):
+
+                    analog_id = line.split(":", 1)[1].strip().replace('"', "")
+
                     break
+
+            print("Gemini結果")
+            print(result)
+            print("送信ID :", analog_id)
 
             threading.Thread(
                 target=send_to_server,
-                args=(title,),
+                args=(analog_id,),
                 daemon=True
             ).start()
 
