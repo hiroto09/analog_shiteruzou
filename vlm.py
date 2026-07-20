@@ -230,9 +230,14 @@ try:
 
         print(current_frame.shape)
 
+        preview = cv2.cvtColor(
+            current_frame,
+            cv2.COLOR_BGRA2BGR
+)
+
         cv2.imshow(
             "Preview",
-            current_frame
+            preview
         )
 
         cv2.waitKey(1)
@@ -241,17 +246,13 @@ try:
 
             print("画像変化あり")
 
-            rgb = cv2.cvtColor(
+            bgr = cv2.cvtColor(
                 current_frame,
-                cv2.COLOR_BGRA2RGB
-            )
-
+                cv2.COLOR_BGRA2BGR
+        )
             cv2.imwrite(
                 "boardgame.jpg",
-                cv2.cvtColor(
-                    rgb,
-                    cv2.COLOR_RGB2BGR
-                )
+                bgr
             )
 
             print("Gemini推論中...")
