@@ -66,13 +66,13 @@ time.sleep(2)
 def has_changed(prev_frame, current_frame, threshold=150000):
 
     prev_gray = cv2.cvtColor(
-        prev_frame,
-        cv2.COLOR_BGRA2GRAY
+    prev_frame,
+    cv2.COLOR_RGB2GRAY
     )
 
     curr_gray = cv2.cvtColor(
         current_frame,
-        cv2.COLOR_BGRA2GRAY
+        cv2.COLOR_RGB2GRAY
     )
 
     diff = cv2.absdiff(
@@ -236,8 +236,8 @@ try:
 
         preview = cv2.cvtColor(
             current_frame,
-            cv2.COLOR_BGRA2BGR
-)
+            cv2.COLOR_RGB2BGR
+        )
 
         cv2.imshow(
             "Preview",
@@ -250,13 +250,12 @@ try:
 
             print("画像変化あり")
 
-            bgr = cv2.cvtColor(
-                current_frame,
-                cv2.COLOR_BGRA2BGR
-        )
             cv2.imwrite(
                 "boardgame.jpg",
-                bgr
+                cv2.cvtColor(
+                    current_frame,
+                    cv2.COLOR_RGB2BGR
+                )
             )
 
             print("Gemini推論中...")
