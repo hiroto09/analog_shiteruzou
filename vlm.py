@@ -60,7 +60,7 @@ time.sleep(2)
 # 差分判定
 # ==========================================
 
-def has_changed(prev_frame, current_frame, threshold=20000):
+def has_changed(prev_frame, current_frame, threshold=100000):
 
     prev_gray = cv2.cvtColor(
         prev_frame,
@@ -147,8 +147,7 @@ def recognize_boardgame(image_path):
     そういった場合や候補内の推定結果に明確な根拠がない場合は 00 を返してください。
 
     回答は次の形式のみで出力してください。
-
-    id: 24
+    id: ⚪︎⚪︎
     信頼度: 95%
 """
                 ]
