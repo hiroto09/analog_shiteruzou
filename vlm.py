@@ -228,6 +228,13 @@ try:
 
         current_frame = picam2.capture_array()
 
+        preview = cv2.cvtColor(
+        current_frame,
+        cv2.COLOR_BGRA2BGR
+        )
+        cv2.imshow("Preview", preview)
+        cv2.waitKey(1)
+
         if has_changed(previous_frame, current_frame):
 
             print("画像変化あり")
