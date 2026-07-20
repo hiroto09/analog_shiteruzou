@@ -230,18 +230,17 @@ try:
         print("撮影")
 
         current_frame = picam2.capture_array()
-        print(current_frame.shape)
-        print(current_frame.dtype)
 
-
-        preview = cv2.cvtColor(
-            current_frame,
-            cv2.COLOR_RGB2BGR
+        cv2.imwrite(
+            "debug.jpg",
+            current_frame
         )
+        print(current_frame[300,300])
+        
 
         cv2.imshow(
             "Preview",
-            preview
+            current_frame
         )
 
         cv2.waitKey(1)
@@ -252,10 +251,7 @@ try:
 
             cv2.imwrite(
                 "boardgame.jpg",
-                cv2.cvtColor(
-                    current_frame,
-                    cv2.COLOR_RGB2BGR
-                )
+                current_frame
             )
 
             print("Gemini推論中...")
