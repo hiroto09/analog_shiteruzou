@@ -230,12 +230,6 @@ try:
         print("撮影")
 
         current_frame = picam2.capture_array()
-
-        cv2.imwrite(
-            "debug.jpg",
-            current_frame
-        )
-        print(current_frame[300,300])
         
 
         cv2.imshow(
