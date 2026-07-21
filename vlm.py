@@ -63,7 +63,7 @@ time.sleep(2)
 # 差分判定
 # ==========================================
 
-def has_changed(prev_frame, current_frame, threshold=150000):
+def has_changed(prev_frame, current_frame, threshold=200000):
 
     prev_gray = cv2.cvtColor(
     prev_frame,
