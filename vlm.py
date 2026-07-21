@@ -256,14 +256,31 @@ try:
             result = recognize_boardgame("boardgame.jpg")
 
             analog_id = "00"
+            confidence = 0
 
             for line in result.splitlines():
 
+                line = line.strip()
+
                 if line.lower().startswith("id"):
 
-                    analog_id = line.split(":", 1)[1].strip().replace('"', "")
+                    analog_id = line.split(":", 1)[1].strip()
 
-                    break
+                elif "信頼度" in line:
+
+                    try:
+                        confidence = int(
+                            line.split(":", 1)[1]
+                            .replace("%", "")
+                            .strip()
+                        )
+                    except:
+                        confidence = 0
+
+            # 信頼度80%未満なら00
+            if confidence < 80:
+                print(f"信頼度不足 ({confidence}%) のため 00 を返します")
+                analog_id = "00"
 
             print("Gemini結果")
             print(result)
