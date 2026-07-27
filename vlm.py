@@ -89,7 +89,6 @@ def has_changed(prev_frame, current_frame, threshold=200000):
 
     changed_pixels = np.count_nonzero(diff)
 
-    print("Changed Pixels :", changed_pixels)
 
     return changed_pixels > threshold
 
@@ -167,12 +166,9 @@ def recognize_boardgame(image_path):
 
             # 503なら30秒待って再試行
             if "503" in str(e):
-                print("Geminiサーバーが混雑しています。30秒後に再試行します。")
                 time.sleep(30)
                 continue
 
-            # その他のエラーも10秒後に再試行
-            print("10秒後に再試行します。")
             time.sleep(10)
 
 
@@ -225,7 +221,6 @@ try:
     while True:
 
         print("--------------------------------")
-        print("1分待機中...")
         time.sleep(INTERVAL)
 
         print("撮影")
@@ -242,14 +237,12 @@ try:
 
         if has_changed(previous_frame, current_frame):
 
-            print("画像変化あり")
 
             cv2.imwrite(
                 "boardgame.jpg",
                 current_frame
             )
 
-            print("Gemini推論中...")
 
 
 
@@ -293,10 +286,6 @@ try:
             ).start()
 
             previous_frame = current_frame
-
-        else:
-
-            print("画像変化なし")
 
 except KeyboardInterrupt:
 
