@@ -154,6 +154,7 @@ def recognize_boardgame(image_path):
     回答は次の形式のみで出力してください。
     id: 〇〇
     信頼度: 〇〇%
+    根拠: 一文
 """
 
                 ]
@@ -250,6 +251,8 @@ try:
 
             result = recognize_boardgame("boardgame.jpg")
 
+            print("Gemini結果")
+            print(result)
             analog_id = "00"
             confidence = 0
 
