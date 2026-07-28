@@ -155,6 +155,7 @@ def recognize_boardgame(image_path):
     id: 〇〇
     信頼度: 〇〇%
 """
+
                 ]
             )
 
@@ -167,10 +168,10 @@ def recognize_boardgame(image_path):
 
             # 503なら30秒待って再試行
             if "503" in str(e):
-                time.sleep(30)
+                time.sleep(60)
                 continue
 
-            time.sleep(10)
+            time.sleep(60)
 
 
 # ==========================================
