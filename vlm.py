@@ -53,11 +53,6 @@ with open(
 
     PROMPT = f.read()
 
-print(
-    "✅ prompt.txt を読み込みました"
-)
-
-
 # ==========================================
 # ログ設定
 # ==========================================
@@ -75,9 +70,6 @@ os.makedirs(
     exist_ok=True
 )
 
-print(
-    f"📝 ログファイル: {LOG_FILE}"
-)
 
 
 # ==========================================
@@ -152,9 +144,6 @@ def write_prediction_log(
                 "========================================\n\n"
             )
 
-        print(
-            f"📝 推定結果をログ保存: {LOG_FILE}"
-        )
 
     except Exception as e:
 
@@ -198,9 +187,6 @@ picam2.configure(config)
 
 picam2.start()
 
-print(
-    "camera started"
-)
 
 time.sleep(2)
 
@@ -260,9 +246,6 @@ def recognize_boardgame(
 
         try:
 
-            print(
-                "🤖 Gemini推論開始"
-            )
 
             response = client.models.generate_content(
 
@@ -305,7 +288,7 @@ def recognize_boardgame(
                     "503エラーのため60秒待機"
                 )
 
-                time.sleep(60)
+                time.sleep(300)
 
                 continue
 
@@ -324,7 +307,7 @@ def recognize_boardgame(
                     "60秒後に再試行します"
                 )
 
-                time.sleep(60)
+                time.sleep(300)
 
                 continue
 
@@ -341,7 +324,7 @@ def recognize_boardgame(
                 "60秒後に再試行します"
             )
 
-            time.sleep(60)
+            time.sleep(300)
 
 
 # ==========================================
@@ -354,9 +337,6 @@ def send_to_server(
 
     try:
 
-        print(
-            "📤 送信開始"
-        )
 
         response = session.post(
 
@@ -533,10 +513,6 @@ try:
             INTERVAL
         )
 
-        print(
-            "📷 撮影"
-        )
-
         current_frame = (
             picam2.capture_array()
         )
@@ -566,10 +542,6 @@ try:
 
         ):
 
-            print(
-                "🔍 画像に変化を検出"
-            )
-
 
             # ==================================
             # 画像保存
@@ -581,10 +553,6 @@ try:
 
                 current_frame
 
-            )
-
-            print(
-                "📸 boardgame.jpg 保存"
             )
 
 
@@ -602,22 +570,6 @@ try:
             # ==================================
             # Gemini結果表示
             # ==================================
-
-            print(
-                "================================"
-            )
-
-            print(
-                "Gemini結果"
-            )
-
-            print(
-                result
-            )
-
-            print(
-                "================================"
-            )
 
 
             # ==================================
@@ -639,11 +591,6 @@ try:
 
             if confidence < 80:
 
-                print(
-                    f"⚠️ 信頼度不足 "
-                    f"({confidence}%)"
-                    " のため 00 を返します"
-                )
 
                 analog_id = "00"
 
@@ -658,10 +605,6 @@ try:
 
             print(
                 f"📊 信頼度 : {confidence}%"
-            )
-
-            print(
-                f"📝 根拠 : {reason}"
             )
 
 
