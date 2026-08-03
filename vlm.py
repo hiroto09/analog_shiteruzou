@@ -13,8 +13,6 @@ from google import genai
 from PIL import Image
 
 
-
-
 # ==========================================
 # .env 読み込み
 # ==========================================
@@ -24,20 +22,49 @@ load_dotenv()
 API_URL = os.getenv("API_URL")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
+if not API_URL:
+    raise ValueError("API_URL が設定されていません")
+
+if not GEMINI_API_KEY:
+    raise ValueError("GEMINI_API_KEY が設定されていません")
+
+
+# ==========================================
+# Prompt読み込み
+# ==========================================
+
+PROMPT_FILE = "prompt.txt"
+
+if not os.path.exists(PROMPT_FILE):
+    raise FileNotFoundError(
+        f"{PROMPT_FILE} が見つかりません"
+    )
+
+with open(
+    PROMPT_FILE,
+    "r",
+    encoding="utf-8"
+) as f:
+    PROMPT = f.read()
+
+print("✅ prompt.txt を読み込みました")
+
+
 # ==========================================
 # HTTP Session
 # ==========================================
 
 session = requests.Session()
 
+
 # ==========================================
 # Gemini
 # ==========================================
 
-
 client = genai.Client(
     api_key=GEMINI_API_KEY
 )
+
 
 # ==========================================
 # Camera
@@ -59,15 +86,20 @@ print("camera started")
 
 time.sleep(2)
 
+
 # ==========================================
 # 差分判定
 # ==========================================
 
-def has_changed(prev_frame, current_frame, threshold=200000):
+def has_changed(
+    prev_frame,
+    current_frame,
+    threshold=200000
+):
 
     prev_gray = cv2.cvtColor(
-    prev_frame,
-    cv2.COLOR_RGB2GRAY
+        prev_frame,
+        cv2.COLOR_RGB2GRAY
     )
 
     curr_gray = cv2.cvtColor(
@@ -89,7 +121,6 @@ def has_changed(prev_frame, current_frame, threshold=200000):
 
     changed_pixels = np.count_nonzero(diff)
 
-
     return changed_pixels > threshold
 
 
@@ -105,72 +136,77 @@ def recognize_boardgame(image_path):
 
         try:
 
+            print("🤖 Gemini推論開始")
+
             response = client.models.generate_content(
 
-                model="gemini-2.5-flash-lite",
+                model="gemini-flash-latest",
 
                 contents=[
                     image,
-                    """
-    画像に写っているボードゲームを推定してください。
-
-    以下の候補から最も近いものを1つ選んでください。
-
-    候補
-    "00": "ボードゲームをしていない",
-    "01": "カタカナーシ", 
-    "02": "チェス", 
-    "03": "モダンアート", 
-    "04": "マーダーミステリー", 
-    "05": "UIかるた",
-    "06": "カラーコードかるた", 
-    "07": "Linuxコマンドかるた", 
-    "08": "トランプ", 
-    "09": "お邪魔者", 
-    "10": "カタン(大航海時代)", 
-    "11": "キャンプ場の殺人鬼", 
-    "12": "コヨーテ", 
-    "13": "犯人は踊る", 
-    "14": "犯人は踊る3", 
-    "15": "お邪魔者2", 
-    "16": "トランプ", 
-    "17": "ファットプロジェクト", 
-    "18": "プログラム言語神経衰弱", 
-    "19": "テストプレイなんてしてないよ", 
-    "20": "まじかる★ベーカリー", 
-    "21": "カタン(スタンダート)", 
-    "22": "カタン(スタンダート)", 
-    "23": "ito", 
-    "24": "人狼", 
-    "25": "プロポーズ", 
-    "26": "麻雀",
-    "27": "宝石の煌めき"
-
-    まず最初にこれまでの推定結果を踏まえずに，この画像の机の上で行われているボードゲームを推定してください．
-    この画像の机には，ボードゲームを行なっていない状態(作業や食事，パソコンやスマホなどの物置)として利用されている場合があります．
-    また麻雀マットが机の上に常に敷かれているが，麻雀牌が置かれていなければ，麻雀をしていると推定しないでください．
-    これらの場合や推定結果に明確な根拠がない場合は 00 を返してください。
-
-    回答は次の形式のみで出力してください。
-    id: 〇〇
-    信頼度: 〇〇%
-    根拠: 一文
-"""
-
+                    PROMPT
                 ]
+
             )
 
-            return response.text
+            if response.text:
+
+                return response.text
+
+            raise RuntimeError(
+                "Geminiから応答がありません"
+            )
 
         except Exception as e:
 
             print("Geminiエラー")
             print(e)
 
-            # 503なら30秒待って再試行
-            if "503" in str(e):
+            error = str(e)
+
+            # ==================================
+            # 503
+            # ==================================
+
+            if "503" in error:
+
+                print(
+                    "503エラーのため60秒待機"
+                )
+
                 time.sleep(60)
+
                 continue
+
+            # ==================================
+            # 429
+            # ==================================
+
+            if "429" in error:
+
+                print(
+                    "⚠️ Gemini APIのクォータ超過"
+                )
+
+                print(
+                    "60秒後に再試行します"
+                )
+
+                time.sleep(60)
+
+                continue
+
+            # ==================================
+            # その他
+            # ==================================
+
+            print(
+                "⚠️ Geminiエラー"
+            )
+
+            print(
+                "60秒後に再試行します"
+            )
 
             time.sleep(60)
 
@@ -183,7 +219,7 @@ def send_to_server(analog_id):
 
     try:
 
-        print("送信開始")
+        print("📤 送信開始")
 
         response = session.post(
 
@@ -198,11 +234,112 @@ def send_to_server(analog_id):
 
         )
 
-        print("Status :", response.status_code)
+        print(
+            "Status :",
+            response.status_code
+        )
+
+        print(
+            "Response :",
+            response.text
+        )
 
     except Exception as e:
 
-        print("送信失敗 :", e)
+        print(
+            "❌ 送信失敗 :",
+            e
+        )
+
+
+# ==========================================
+# Gemini結果解析
+# ==========================================
+
+def parse_result(result):
+
+    analog_id = "00"
+    confidence = 0
+    reason = ""
+
+    if not result:
+        return analog_id, confidence, reason
+
+    for line in result.splitlines():
+
+        line = line.strip()
+
+        # ==================================
+        # ID
+        # ==================================
+
+        if line.lower().startswith("id"):
+
+            try:
+
+                analog_id = line.split(
+                    ":",
+                    1
+                )[1].strip()
+
+            except (
+                IndexError,
+                ValueError
+            ):
+
+                analog_id = "00"
+
+
+        # ==================================
+        # 信頼度
+        # ==================================
+
+        elif "信頼度" in line:
+
+            try:
+
+                confidence = int(
+                    line.split(
+                        ":",
+                        1
+                    )[1]
+                    .replace("%", "")
+                    .strip()
+                )
+
+            except (
+                IndexError,
+                ValueError
+            ):
+
+                confidence = 0
+
+
+        # ==================================
+        # 根拠
+        # ==================================
+
+        elif "根拠" in line:
+
+            try:
+
+                reason = line.split(
+                    ":",
+                    1
+                )[1].strip()
+
+            except (
+                IndexError,
+                ValueError
+            ):
+
+                reason = ""
+
+    return (
+        analog_id,
+        confidence,
+        reason
+    )
 
 
 # ==========================================
@@ -213,23 +350,33 @@ previous_frame = picam2.capture_array()
 
 print("初回画像取得")
 
+
 # ==========================================
-# 1分ごと監視
+# 監視間隔
 # ==========================================
 
 INTERVAL = 60
+
+
+# ==========================================
+# メインループ
+# ==========================================
 
 try:
 
     while True:
 
         print("--------------------------------")
+
         time.sleep(INTERVAL)
 
-        print("撮影")
+        print("📷 撮影")
 
         current_frame = picam2.capture_array()
-        
+
+        # ==================================
+        # プレビュー
+        # ==================================
 
         cv2.imshow(
             "Preview",
@@ -238,66 +385,128 @@ try:
 
         cv2.waitKey(1)
 
-        if has_changed(previous_frame, current_frame):
+        # ==================================
+        # 差分チェック
+        # ==================================
 
+        if has_changed(
+            previous_frame,
+            current_frame
+        ):
+
+            print(
+                "🔍 画像に変化を検出"
+            )
+
+            # ==================================
+            # 画像保存
+            # ==================================
 
             cv2.imwrite(
                 "boardgame.jpg",
                 current_frame
             )
 
+            print(
+                "📸 boardgame.jpg 保存"
+            )
 
+            # ==================================
+            # Gemini推論
+            # ==================================
 
+            result = recognize_boardgame(
+                "boardgame.jpg"
+            )
 
-            result = recognize_boardgame("boardgame.jpg")
+            # ==================================
+            # Gemini結果表示
+            # ==================================
 
+            print("================================")
             print("Gemini結果")
             print(result)
-            analog_id = "00"
-            confidence = 0
+            print("================================")
 
-            for line in result.splitlines():
+            # ==================================
+            # 結果解析
+            # ==================================
 
-                line = line.strip()
+            (
+                analog_id,
+                confidence,
+                reason
+            ) = parse_result(
+                result
+            )
 
-                if line.lower().startswith("id"):
+            # ==================================
+            # 信頼度チェック
+            # ==================================
 
-                    analog_id = line.split(":", 1)[1].strip()
-
-                elif "信頼度" in line:
-
-                    try:
-                        confidence = int(
-                            line.split(":", 1)[1]
-                            .replace("%", "")
-                            .strip()
-                        )
-                    except:
-                        confidence = 0
-
-            # 信頼度80%未満なら00
             if confidence < 80:
-                print(f"信頼度不足 ({confidence}%) のため 00 を返します")
+
+                print(
+                    f"⚠️ 信頼度不足 "
+                    f"({confidence}%)"
+                    " のため 00 を返します"
+                )
+
                 analog_id = "00"
 
-            print("Gemini結果")
-            print(result)
-            print("送信ID :", analog_id)
+            # ==================================
+            # 最終結果
+            # ==================================
+
+            print(
+                f"🎮 推定ID : {analog_id}"
+            )
+
+            print(
+                f"📊 信頼度 : {confidence}%"
+            )
+
+            print(
+                f"📝 根拠 : {reason}"
+            )
+
+            # ==================================
+            # API送信
+            # ==================================
 
             threading.Thread(
+
                 target=send_to_server,
+
                 args=(analog_id,),
+
                 daemon=True
+
             ).start()
 
+            # ==================================
+            # 前回画像更新
+            # ==================================
+
             previous_frame = current_frame
+
+        else:
+
+            print(
+                "変化なし"
+            )
+
 
 except KeyboardInterrupt:
 
     print("終了します")
 
+
 finally:
 
     picam2.stop()
 
+    cv2.destroyAllWindows()
+
     print("camera stopped")
+
