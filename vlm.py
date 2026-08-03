@@ -23,10 +23,14 @@ API_URL = os.getenv("API_URL")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 if not API_URL:
-    raise ValueError("API_URL が設定されていません")
+    raise ValueError(
+        "API_URL が設定されていません"
+    )
 
 if not GEMINI_API_KEY:
-    raise ValueError("GEMINI_API_KEY が設定されていません")
+    raise ValueError(
+        "GEMINI_API_KEY が設定されていません"
+    )
 
 
 # ==========================================
@@ -36,6 +40,7 @@ if not GEMINI_API_KEY:
 PROMPT_FILE = "prompt.txt"
 
 if not os.path.exists(PROMPT_FILE):
+
     raise FileNotFoundError(
         f"{PROMPT_FILE} が見つかりません"
     )
@@ -45,9 +50,119 @@ with open(
     "r",
     encoding="utf-8"
 ) as f:
+
     PROMPT = f.read()
 
-print("✅ prompt.txt を読み込みました")
+print(
+    "✅ prompt.txt を読み込みました"
+)
+
+
+# ==========================================
+# ログ設定
+# ==========================================
+
+LOG_DIR = "logs"
+
+LOG_FILE = os.path.join(
+    LOG_DIR,
+    "analog_prediction.log"
+)
+
+# logsディレクトリがなければ作成
+os.makedirs(
+    LOG_DIR,
+    exist_ok=True
+)
+
+print(
+    f"📝 ログファイル: {LOG_FILE}"
+)
+
+
+# ==========================================
+# 推定結果ログ
+# ==========================================
+
+def write_prediction_log(
+    result,
+    analog_id,
+    confidence,
+    reason,
+    sent_id
+):
+
+    timestamp = datetime.now().strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
+
+    try:
+
+        with open(
+            LOG_FILE,
+            "a",
+            encoding="utf-8"
+        ) as f:
+
+            f.write(
+                "========================================\n"
+            )
+
+            f.write(
+                f"日時: {timestamp}\n"
+            )
+
+            f.write(
+                f"id: {analog_id}\n"
+            )
+
+            f.write(
+                f"信頼度: {confidence}%\n"
+            )
+
+            f.write(
+                f"根拠: {reason}\n"
+            )
+
+            f.write(
+                f"送信ID: {sent_id}\n"
+            )
+
+            f.write(
+                "Gemini生回答:\n"
+            )
+
+            if result:
+
+                f.write(
+                    result.strip()
+                )
+
+            else:
+
+                f.write(
+                    "Geminiから回答なし"
+                )
+
+            f.write(
+                "\n"
+            )
+
+            f.write(
+                "========================================\n\n"
+            )
+
+        print(
+            f"📝 推定結果をログ保存: {LOG_FILE}"
+        )
+
+    except Exception as e:
+
+        print(
+            "⚠️ ログ保存エラー:"
+        )
+
+        print(e)
 
 
 # ==========================================
@@ -80,9 +195,12 @@ config = picam2.create_preview_configuration(
 )
 
 picam2.configure(config)
+
 picam2.start()
 
-print("camera started")
+print(
+    "camera started"
+)
 
 time.sleep(2)
 
@@ -119,7 +237,9 @@ def has_changed(
         cv2.THRESH_BINARY
     )
 
-    changed_pixels = np.count_nonzero(diff)
+    changed_pixels = np.count_nonzero(
+        diff
+    )
 
     return changed_pixels > threshold
 
@@ -128,15 +248,21 @@ def has_changed(
 # Gemini 推論
 # ==========================================
 
-def recognize_boardgame(image_path):
+def recognize_boardgame(
+    image_path
+):
 
-    image = Image.open(image_path)
+    image = Image.open(
+        image_path
+    )
 
     while True:
 
         try:
 
-            print("🤖 Gemini推論開始")
+            print(
+                "🤖 Gemini推論開始"
+            )
 
             response = client.models.generate_content(
 
@@ -157,12 +283,17 @@ def recognize_boardgame(image_path):
                 "Geminiから応答がありません"
             )
 
+
         except Exception as e:
 
-            print("Geminiエラー")
+            print(
+                "Geminiエラー"
+            )
+
             print(e)
 
             error = str(e)
+
 
             # ==================================
             # 503
@@ -177,6 +308,7 @@ def recognize_boardgame(image_path):
                 time.sleep(60)
 
                 continue
+
 
             # ==================================
             # 429
@@ -195,6 +327,7 @@ def recognize_boardgame(image_path):
                 time.sleep(60)
 
                 continue
+
 
             # ==================================
             # その他
@@ -215,11 +348,15 @@ def recognize_boardgame(image_path):
 # API送信
 # ==========================================
 
-def send_to_server(analog_id):
+def send_to_server(
+    analog_id
+):
 
     try:
 
-        print("📤 送信開始")
+        print(
+            "📤 送信開始"
+        )
 
         response = session.post(
 
@@ -256,24 +393,38 @@ def send_to_server(analog_id):
 # Gemini結果解析
 # ==========================================
 
-def parse_result(result):
+def parse_result(
+    result
+):
 
     analog_id = "00"
+
     confidence = 0
+
     reason = ""
 
+
     if not result:
-        return analog_id, confidence, reason
+
+        return (
+            analog_id,
+            confidence,
+            reason
+        )
+
 
     for line in result.splitlines():
 
         line = line.strip()
 
+
         # ==================================
         # ID
         # ==================================
 
-        if line.lower().startswith("id"):
+        if line.lower().startswith(
+            "id"
+        ):
 
             try:
 
@@ -299,12 +450,17 @@ def parse_result(result):
             try:
 
                 confidence = int(
+
                     line.split(
                         ":",
                         1
                     )[1]
-                    .replace("%", "")
+                    .replace(
+                        "%",
+                        ""
+                    )
                     .strip()
+
                 )
 
             except (
@@ -335,6 +491,7 @@ def parse_result(result):
 
                 reason = ""
 
+
     return (
         analog_id,
         confidence,
@@ -348,7 +505,9 @@ def parse_result(result):
 
 previous_frame = picam2.capture_array()
 
-print("初回画像取得")
+print(
+    "初回画像取得"
+)
 
 
 # ==========================================
@@ -366,13 +525,22 @@ try:
 
     while True:
 
-        print("--------------------------------")
+        print(
+            "--------------------------------"
+        )
 
-        time.sleep(INTERVAL)
+        time.sleep(
+            INTERVAL
+        )
 
-        print("📷 撮影")
+        print(
+            "📷 撮影"
+        )
 
-        current_frame = picam2.capture_array()
+        current_frame = (
+            picam2.capture_array()
+        )
+
 
         # ==================================
         # プレビュー
@@ -385,48 +553,72 @@ try:
 
         cv2.waitKey(1)
 
+
         # ==================================
         # 差分チェック
         # ==================================
 
         if has_changed(
+
             previous_frame,
+
             current_frame
+
         ):
 
             print(
                 "🔍 画像に変化を検出"
             )
 
+
             # ==================================
             # 画像保存
             # ==================================
 
             cv2.imwrite(
+
                 "boardgame.jpg",
+
                 current_frame
+
             )
 
             print(
                 "📸 boardgame.jpg 保存"
             )
 
+
             # ==================================
             # Gemini推論
             # ==================================
 
             result = recognize_boardgame(
+
                 "boardgame.jpg"
+
             )
+
 
             # ==================================
             # Gemini結果表示
             # ==================================
 
-            print("================================")
-            print("Gemini結果")
-            print(result)
-            print("================================")
+            print(
+                "================================"
+            )
+
+            print(
+                "Gemini結果"
+            )
+
+            print(
+                result
+            )
+
+            print(
+                "================================"
+            )
+
 
             # ==================================
             # 結果解析
@@ -439,6 +631,7 @@ try:
             ) = parse_result(
                 result
             )
+
 
             # ==================================
             # 信頼度チェック
@@ -453,6 +646,7 @@ try:
                 )
 
                 analog_id = "00"
+
 
             # ==================================
             # 最終結果
@@ -470,6 +664,33 @@ try:
                 f"📝 根拠 : {reason}"
             )
 
+
+            # ==================================
+            # API送信用ID
+            # ==================================
+
+            sent_id = analog_id
+
+
+            # ==================================
+            # ログ保存
+            # ==================================
+
+            write_prediction_log(
+
+                result=result,
+
+                analog_id=analog_id,
+
+                confidence=confidence,
+
+                reason=reason,
+
+                sent_id=sent_id
+
+            )
+
+
             # ==================================
             # API送信
             # ==================================
@@ -478,17 +699,21 @@ try:
 
                 target=send_to_server,
 
-                args=(analog_id,),
+                args=(sent_id,),
 
                 daemon=True
 
             ).start()
 
+
             # ==================================
             # 前回画像更新
             # ==================================
 
-            previous_frame = current_frame
+            previous_frame = (
+                current_frame
+            )
+
 
         else:
 
@@ -499,7 +724,9 @@ try:
 
 except KeyboardInterrupt:
 
-    print("終了します")
+    print(
+        "終了します"
+    )
 
 
 finally:
@@ -508,5 +735,7 @@ finally:
 
     cv2.destroyAllWindows()
 
-    print("camera stopped")
+    print(
+        "camera stopped"
+    )
 
