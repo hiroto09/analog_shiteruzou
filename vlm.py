@@ -45,13 +45,59 @@ if not os.path.exists(PROMPT_FILE):
         f"{PROMPT_FILE} が見つかりません"
     )
 
-with open(
-    PROMPT_FILE,
-    "r",
-    encoding="utf-8"
-) as f:
+ANALOG_EVENTS_API_URL = os.getenv("ANALOG_EVENTS_API_URL")
 
-    PROMPT = f.read()
+
+def get_analog_candidates():
+    """
+    StayWatch APIからanalogゲーム一覧を取得し、
+    prompt.txtの候補欄に使用する文字列を作成する。
+    """
+    response = session.get(
+        ANALOG_EVENTS_API_URL,
+        params={"game_type": "analog"},
+        timeout=10
+    )
+
+    response.raise_for_status()
+
+    games = response.json()["data"]
+
+    candidates = "\n".join(
+        f'    "{game["ID"]:02d}": "{game["Name"]}",'
+        for game in games
+    )
+
+    print("🎲 analogゲーム候補をAPIから取得しました")
+
+    for game in games:
+        print(
+            f'    ID: {game["ID"]:02d}, '
+            f'Name: {game["Name"]}'
+        )
+
+    return candidates
+
+
+def create_prompt():
+    """
+    prompt.txtを読み込み、
+    {GAME_CANDIDATES} をAPIから取得したanalog候補一覧に置き換える。
+    """
+    with open(
+        PROMPT_FILE,
+        "r",
+        encoding="utf-8"
+    ) as f:
+
+        prompt_template = f.read()
+
+    candidates = get_analog_candidates()
+
+    return prompt_template.replace(
+        "{GAME_CANDIDATES}",
+        candidates
+    )
 
 # ==========================================
 # ログ設定
@@ -69,8 +115,6 @@ os.makedirs(
     LOG_DIR,
     exist_ok=True
 )
-
-
 
 # ==========================================
 # 推定結果ログ
@@ -247,13 +291,16 @@ def recognize_boardgame(
         try:
 
 
+            # 推論ごとにAPIから最新のanalogゲーム一覧を取得
+            prompt = create_prompt()
+
             response = client.models.generate_content(
 
                 model="gemini-flash-latest",
 
                 contents=[
                     image,
-                    PROMPT
+                    prompt
                 ]
 
             )
@@ -340,7 +387,7 @@ def send_to_server(
 
         response = session.post(
 
-            API_URL,
+            ANALOG_EVENTS_API_URL,
 
             json={
                 "analog_id": analog_id,
@@ -517,7 +564,6 @@ try:
             picam2.capture_array()
         )
 
-
         # ==================================
         # プレビュー
         # ==================================
@@ -548,11 +594,8 @@ try:
             # ==================================
 
             cv2.imwrite(
-
                 "boardgame.jpg",
-
                 current_frame
-
             )
 
 
@@ -681,4 +724,3 @@ finally:
     print(
         "camera stopped"
     )
-
