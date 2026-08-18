@@ -334,7 +334,7 @@ def recognize_boardgame(
             if "503" in error:
 
                 print(
-                    "503エラーのため60秒待機"
+                    "503エラーのため5分間待機"
                 )
 
                 time.sleep(300)
@@ -353,7 +353,7 @@ def recognize_boardgame(
                 )
 
                 print(
-                    "60秒後に再試行します"
+                    "5分後に再試行します"
                 )
 
                 time.sleep(300)
@@ -370,7 +370,7 @@ def recognize_boardgame(
             )
 
             print(
-                "60秒後に再試行します"
+                "5分後に再試行します"
             )
 
             time.sleep(300)
