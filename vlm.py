@@ -199,6 +199,12 @@ def write_prediction_log(
 
 
 # ==========================================
+# Prompt作成
+# ==========================================
+
+PROMPT = create_prompt()
+
+# ==========================================
 # HTTP Session
 # ==========================================
 
@@ -290,17 +296,13 @@ def recognize_boardgame(
 
         try:
 
-
-            # 推論ごとにAPIから最新のanalogゲーム一覧を取得
-            prompt = create_prompt()
-
             response = client.models.generate_content(
 
                 model="gemini-flash-latest",
 
                 contents=[
                     image,
-                    prompt
+                    PROMPT
                 ]
 
             )
@@ -657,7 +659,6 @@ try:
 
             sent_id = analog_id
 
-
             # ==================================
             # ログ保存
             # ==================================
@@ -676,7 +677,6 @@ try:
 
             )
 
-
             # ==================================
             # API送信
             # ==================================
@@ -691,7 +691,6 @@ try:
 
             ).start()
 
-
             # ==================================
             # 前回画像更新
             # ==================================
@@ -700,20 +699,17 @@ try:
                 current_frame
             )
 
-
         else:
 
             print(
                 "変化なし"
             )
 
-
 except KeyboardInterrupt:
 
     print(
         "終了します"
     )
-
 
 finally:
 
