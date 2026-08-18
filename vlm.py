@@ -387,7 +387,7 @@ def send_to_server(
 
         response = session.post(
 
-            ANALOG_EVENTS_API_URL,
+            API_URL,
 
             json={
                 "analog_id": analog_id,
@@ -424,7 +424,7 @@ def parse_result(
     result
 ):
 
-    analog_id = "00"
+    analog_id = "0"
 
     confidence = 0
 
@@ -465,7 +465,7 @@ def parse_result(
                 ValueError
             ):
 
-                analog_id = "00"
+                analog_id = "0"
 
 
         # ==================================
@@ -635,7 +635,7 @@ try:
             if confidence < 80:
 
 
-                analog_id = "00"
+                analog_id = "0"
 
 
             # ==================================
