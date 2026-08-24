@@ -116,9 +116,9 @@ def recognize_boardgame(image_path):
         except Exception as e:
             print("Geminiエラー:", e)
             if "503" in str(e) or "429" in str(e):
-                time.sleep(300)
+                time.sleep(3600)
                 continue
-            time.sleep(300)
+            time.sleep(600)
 
 def parse_result(result):
     analog_id, confidence, reason = "0", 0, ""
@@ -176,8 +176,6 @@ def inference_loop():
             if not has_changed(previous_frame, current_frame):
                 previous_frame = current_frame
                 continue
-
-            print("🔍 画面変化を検出、推論を開始します...")
             
             # ホストサーバーへ「推論中」を通知
             notify_server(inference_running=True)
