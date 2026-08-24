@@ -1,7 +1,9 @@
-nfcpy
-requests
+fastapi
+uvicorn
 python-dotenv
-picamera2
-tensorflow
-numpy
+requests
+google-genai
+Pillow
 opencv-python
+numpy
+picamera2

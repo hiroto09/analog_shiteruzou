@@ -1,722 +1,212 @@
-from picamera2 import Picamera2
+import os
+import time
+import requests
 import cv2
 import numpy as np
-import time
-import os
-import threading
-import requests
-
-from dotenv import load_dotenv
 from datetime import datetime
+from dotenv import load_dotenv
 
 from google import genai
 from PIL import Image
+from picamera2 import Picamera2
 
-
-# ==========================================
-# .env 読み込み
-# ==========================================
+# =========================================================
+# .env & 環境変数チェック
+# =========================================================
 
 load_dotenv()
 
-API_URL = os.getenv("API_URL")
+# HOST_API_URL はホストサーバーの /analog エンドポイント
+HOST_API_URL = os.getenv("API_URL")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
-if not API_URL:
-    raise ValueError(
-        "API_URL が設定されていません"
-    )
-
-if not GEMINI_API_KEY:
-    raise ValueError(
-        "GEMINI_API_KEY が設定されていません"
-    )
-
-
-# ==========================================
-# Prompt読み込み
-# ==========================================
-
-PROMPT_FILE = "prompt.txt"
-
-if not os.path.exists(PROMPT_FILE):
-
-    raise FileNotFoundError(
-        f"{PROMPT_FILE} が見つかりません"
-    )
-
 ANALOG_EVENTS_API_URL = os.getenv("ANALOG_EVENTS_API_URL")
 
-
-def get_analog_candidates():
-    """
-    StayWatch APIからanalogゲーム一覧を取得し、
-    prompt.txtの候補欄に使用する文字列を作成する。
-    """
-    response = session.get(
-        ANALOG_EVENTS_API_URL,
-        params={"game_type": "analog"},
-        timeout=10
-    )
-
-    response.raise_for_status()
-
-    games = response.json()["data"]
-
-    candidates = "\n".join(
-        f'    "{game["ID"]:02d}": "{game["Name"]}",'
-        for game in games
-    )
-
-    print("🎲 analogゲーム候補をAPIから取得しました")
-
-    for game in games:
-        print(
-            f'    ID: {game["ID"]:02d}, '
-            f'Name: {game["Name"]}'
-        )
-
-    return candidates
-
-
-def create_prompt():
-    """
-    prompt.txtを読み込み、
-    {GAME_CANDIDATES} をAPIから取得したanalog候補一覧に置き換える。
-    """
-    with open(
-        PROMPT_FILE,
-        "r",
-        encoding="utf-8"
-    ) as f:
-
-        prompt_template = f.read()
-
-    candidates = get_analog_candidates()
-
-    return prompt_template.replace(
-        "{GAME_CANDIDATES}",
-        candidates
-    )
-
-# ==========================================
-# ログ設定
-# ==========================================
-
-LOG_DIR = "logs"
-
-LOG_FILE = os.path.join(
-    LOG_DIR,
-    "analog_prediction.log"
-)
-
-# logsディレクトリがなければ作成
-os.makedirs(
-    LOG_DIR,
-    exist_ok=True
-)
-
-# ==========================================
-# 推定結果ログ
-# ==========================================
-
-def write_prediction_log(
-    result,
-    analog_id,
-    confidence,
-    reason,
-    sent_id
-):
-
-    timestamp = datetime.now().strftime(
-        "%Y-%m-%d %H:%M:%S"
-    )
-
-    try:
-
-        with open(
-            LOG_FILE,
-            "a",
-            encoding="utf-8"
-        ) as f:
-
-            f.write(
-                "========================================\n"
-            )
-
-            f.write(
-                f"日時: {timestamp}\n"
-            )
-
-            f.write(
-                f"id: {analog_id}\n"
-            )
-
-            f.write(
-                f"信頼度: {confidence}%\n"
-            )
-
-            f.write(
-                f"根拠: {reason}\n"
-            )
-
-            f.write(
-                f"送信ID: {sent_id}\n"
-            )
-
-            f.write(
-                "Gemini生回答:\n"
-            )
-
-            if result:
-
-                f.write(
-                    result.strip()
-                )
-
-            else:
-
-                f.write(
-                    "Geminiから回答なし"
-                )
-
-            f.write(
-                "\n"
-            )
-
-            f.write(
-                "========================================\n\n"
-            )
-
-
-    except Exception as e:
-
-        print(
-            "⚠️ ログ保存エラー:"
-        )
-
-        print(e)
-
-
-
-# ==========================================
-# HTTP Session
-# ==========================================
+if not HOST_API_URL: raise ValueError("API_URL が設定されていません")
+if not GEMINI_API_KEY: raise ValueError("GEMINI_API_KEY が設定されていません")
+if not ANALOG_EVENTS_API_URL: raise ValueError("ANALOG_EVENTS_API_URL が設定されていません")
 
 session = requests.Session()
 
-# ==========================================
-# Prompt作成
-# ==========================================
+# ログ設定
+LOG_DIR = "logs"
+LOG_FILE = os.path.join(LOG_DIR, "analog_prediction.log")
+os.makedirs(LOG_DIR, exist_ok=True)
+
+
+# =========================================================
+# ゲーム一覧 & Prompt
+# =========================================================
+
+GAME_MAP = {"0": "何もしてない"}
+
+def get_game_map():
+    global GAME_MAP
+    try:
+        print("🎲 ゲーム一覧を取得しています...")
+        response = session.get(ANALOG_EVENTS_API_URL, params={"game_type": "analog"}, timeout=10)
+        response.raise_for_status()
+        
+        games = response.json()["data"]
+        new_game_map = {"0": "何もしてない"}
+        for game in games:
+            new_game_map[str(game["ID"])] = game["Name"]
+            
+        GAME_MAP = new_game_map
+        print("✅ ゲーム一覧取得完了")
+    except Exception as e:
+        print("❌ ゲーム一覧取得エラー:", e)
+
+get_game_map()
+
+client = genai.Client(api_key=GEMINI_API_KEY)
+PROMPT_FILE = "prompt.txt"
+
+if not os.path.exists(PROMPT_FILE):
+    raise FileNotFoundError(f"{PROMPT_FILE} が見つかりません")
+
+def create_prompt():
+    with open(PROMPT_FILE, "r", encoding="utf-8") as f:
+        prompt_template = f.read()
+    candidates = "\n".join(f'    "{gid}": "{gname}",' for gid, gname in GAME_MAP.items())
+    return prompt_template.replace("{GAME_CANDIDATES}", candidates)
 
 PROMPT = create_prompt()
 
-# ==========================================
-# Gemini
-# ==========================================
 
-client = genai.Client(
-    api_key=GEMINI_API_KEY
-)
-
-
-# ==========================================
-# Camera
-# ==========================================
+# =========================================================
+# Camera & 推定設定
+# =========================================================
 
 picam2 = Picamera2()
-
 config = picam2.create_preview_configuration(
-    main={
-        "size": (640, 640),
-        "format": "RGB888"
-    }
+    main={"size": (640, 640), "format": "RGB888"}
 )
-
 picam2.configure(config)
-
 picam2.start()
-
-
 time.sleep(2)
-
-
-# ==========================================
-# 差分判定
-# ==========================================
-
-def has_changed(
-    prev_frame,
-    current_frame,
-    threshold=200000
-):
-
-    prev_gray = cv2.cvtColor(
-        prev_frame,
-        cv2.COLOR_RGB2GRAY
-    )
-
-    curr_gray = cv2.cvtColor(
-        current_frame,
-        cv2.COLOR_RGB2GRAY
-    )
-
-    diff = cv2.absdiff(
-        prev_gray,
-        curr_gray
-    )
-
-    _, diff = cv2.threshold(
-        diff,
-        30,
-        255,
-        cv2.THRESH_BINARY
-    )
-
-    changed_pixels = np.count_nonzero(
-        diff
-    )
-
-    return changed_pixels > threshold
-
-
-# ==========================================
-# Gemini 推論
-# ==========================================
-
-def recognize_boardgame(
-    image_path
-):
-
-    image = Image.open(
-        image_path
-    )
-
-    while True:
-
-        try:
-
-            response = client.models.generate_content(
-
-                model="gemini-flash-latest",
-
-                contents=[
-                    image,
-                    PROMPT
-                ]
-
-            )
-
-            if response.text:
-
-                return response.text
-
-            raise RuntimeError(
-                "Geminiから応答がありません"
-            )
-
-
-        except Exception as e:
-
-            print(
-                "Geminiエラー"
-            )
-
-            print(e)
-
-            error = str(e)
-
-
-            # ==================================
-            # 503
-            # ==================================
-
-            if "503" in error:
-
-                print(
-                    "503エラーのため5分間待機"
-                )
-
-                time.sleep(300)
-
-                continue
-
-
-            # ==================================
-            # 429
-            # ==================================
-
-            if "429" in error:
-
-                print(
-                    "⚠️ Gemini APIのクォータ超過"
-                )
-
-                print(
-                    "5分後に再試行します"
-                )
-
-                time.sleep(300)
-
-                continue
-
-
-            # ==================================
-            # その他
-            # ==================================
-
-            print(
-                "⚠️ Geminiエラー"
-            )
-
-            print(
-                "5分後に再試行します"
-            )
-
-            time.sleep(300)
-
-
-# ==========================================
-# API送信
-# ==========================================
-
-def send_to_server(
-    analog_id
-):
-
-    try:
-
-
-        response = session.post(
-
-            API_URL,
-
-            json={
-                "analog_id": analog_id,
-                "timestamp": datetime.now().isoformat()
-            },
-
-            timeout=5
-
-        )
-
-        print(
-            "Status :",
-            response.status_code
-        )
-
-        print(
-            "Response :",
-            response.text
-        )
-
-    except Exception as e:
-
-        print(
-            "❌ 送信失敗 :",
-            e
-        )
-
-
-# ==========================================
-# Gemini結果解析
-# ==========================================
-
-def parse_result(
-    result
-):
-
-    analog_id = "0"
-
-    confidence = 0
-
-    reason = ""
-
-
-    if not result:
-
-        return (
-            analog_id,
-            confidence,
-            reason
-        )
-
-
-    for line in result.splitlines():
-
-        line = line.strip()
-
-
-        # ==================================
-        # ID
-        # ==================================
-
-        if line.lower().startswith(
-            "id"
-        ):
-
-            try:
-
-                analog_id = line.split(
-                    ":",
-                    1
-                )[1].strip()
-
-            except (
-                IndexError,
-                ValueError
-            ):
-
-                analog_id = "0"
-
-
-        # ==================================
-        # 信頼度
-        # ==================================
-
-        elif "信頼度" in line:
-
-            try:
-
-                confidence = int(
-
-                    line.split(
-                        ":",
-                        1
-                    )[1]
-                    .replace(
-                        "%",
-                        ""
-                    )
-                    .strip()
-
-                )
-
-            except (
-                IndexError,
-                ValueError
-            ):
-
-                confidence = 0
-
-
-        # ==================================
-        # 根拠
-        # ==================================
-
-        elif "根拠" in line:
-
-            try:
-
-                reason = line.split(
-                    ":",
-                    1
-                )[1].strip()
-
-            except (
-                IndexError,
-                ValueError
-            ):
-
-                reason = ""
-
-
-    return (
-        analog_id,
-        confidence,
-        reason
-    )
-
-
-# ==========================================
-# 初回画像取得
-# ==========================================
-
-previous_frame = picam2.capture_array()
-
-print(
-    "初回画像取得"
-)
-
-
-# ==========================================
-# 監視間隔
-# ==========================================
+print("📷 Camera started")
 
 INTERVAL = 60
+CHANGE_THRESHOLD = 200000
+CONFIDENCE_THRESHOLD = 80
 
 
-# ==========================================
+# =========================================================
+# 推論・ヘルパー関数
+# =========================================================
+
+def has_changed(prev_frame, current_frame, threshold=CHANGE_THRESHOLD):
+    prev_gray = cv2.cvtColor(prev_frame, cv2.COLOR_RGB2GRAY)
+    curr_gray = cv2.cvtColor(current_frame, cv2.COLOR_RGB2GRAY)
+    diff = cv2.absdiff(prev_gray, curr_gray)
+    _, diff = cv2.threshold(diff, 30, 255, cv2.THRESH_BINARY)
+    return np.count_nonzero(diff) > threshold
+
+def recognize_boardgame(image_path):
+    image = Image.open(image_path)
+    while True:
+        try:
+            response = client.models.generate_content(
+                model="gemini-flash-latest",
+                contents=[image, PROMPT]
+            )
+            if response.text:
+                return response.text
+            raise RuntimeError("Geminiから応答がありません")
+        except Exception as e:
+            print("Geminiエラー:", e)
+            if "503" in str(e) or "429" in str(e):
+                time.sleep(300)
+                continue
+            time.sleep(300)
+
+def parse_result(result):
+    analog_id, confidence, reason = "0", 0, ""
+    if not result: return analog_id, confidence, reason
+    for line in result.splitlines():
+        line = line.strip()
+        if line.lower().startswith("id"):
+            try: analog_id = line.split(":", 1)[1].strip()
+            except: pass
+        elif "信頼度" in line:
+            try: confidence = int(line.split(":", 1)[1].replace("%", "").strip())
+            except: pass
+        elif "根拠" in line:
+            try: reason = line.split(":", 1)[1].strip()
+            except: pass
+    return analog_id, confidence, reason
+
+def write_prediction_log(result, analog_id, confidence, reason):
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
+            f.write("========================================\n")
+            f.write(f"日時: {timestamp}\nid: {analog_id}\n信頼度: {confidence}%\n根拠: {reason}\n")
+            f.write("Gemini生回答:\n" + (result.strip() if result else "なし") + "\n")
+            f.write("========================================\n\n")
+    except Exception as e:
+        print("ログ保存エラー:", e)
+
+def notify_server(analog_id=None, inference_running=None):
+    payload = {}
+    if analog_id is not None:
+        payload["analog_id"] = analog_id
+    if inference_running is not None:
+        payload["inference_running"] = inference_running
+
+    try:
+        session.post(HOST_API_URL, json=payload, timeout=5)
+    except requests.exceptions.RequestException as e:
+        print(f"❌ サーバーへの送信失敗: {e}")
+
+
+# =========================================================
 # メインループ
-# ==========================================
+# =========================================================
 
-try:
+def inference_loop():
+    previous_frame = picam2.capture_array()
+    print("🟢 監視開始")
 
     while True:
+        try:
+            time.sleep(INTERVAL)
+            current_frame = picam2.capture_array()
 
-        print(
-            "--------------------------------"
-        )
+            if not has_changed(previous_frame, current_frame):
+                previous_frame = current_frame
+                continue
 
-        time.sleep(
-            INTERVAL
-        )
+            print("🔍 画面変化を検出、推論を開始します...")
+            
+            # ホストサーバーへ「推論中」を通知
+            notify_server(inference_running=True)
 
-        current_frame = (
-            picam2.capture_array()
-        )
+            image_path = "boardgame.jpg"
+            cv2.imwrite(image_path, current_frame)
 
-        # ==================================
-        # プレビュー
-        # ==================================
+            result = recognize_boardgame(image_path)
+            analog_id, confidence, reason = parse_result(result)
 
-        cv2.imshow(
-            "Preview",
-            current_frame
-        )
-
-        cv2.waitKey(1)
-
-
-        # ==================================
-        # 差分チェック
-        # ==================================
-
-        if has_changed(
-
-            previous_frame,
-
-            current_frame
-
-        ):
-
-
-            # ==================================
-            # 画像保存
-            # ==================================
-
-            cv2.imwrite(
-                "boardgame.jpg",
-                current_frame
-            )
-
-
-            # ==================================
-            # Gemini推論
-            # ==================================
-
-            result = recognize_boardgame(
-
-                "boardgame.jpg"
-
-            )
-
-
-            # ==================================
-            # Gemini結果表示
-            # ==================================
-
-
-            # ==================================
-            # 結果解析
-            # ==================================
-
-            (
-                analog_id,
-                confidence,
-                reason
-            ) = parse_result(
-                result
-            )
-
-
-            # ==================================
-            # 信頼度チェック
-            # ==================================
-
-            if confidence < 80:
-
-
+            if confidence < CONFIDENCE_THRESHOLD:
                 analog_id = "0"
 
+            print(f"🎮 推定ID: {analog_id} (信頼度: {confidence}%)")
+            write_prediction_log(result, analog_id, confidence, reason)
 
-            # ==================================
-            # 最終結果
-            # ==================================
+            # ホストサーバーへ「推論完了・結果」を通知
+            notify_server(analog_id=analog_id, inference_running=False)
 
-            print(
-                f"🎮 推定ID : {analog_id}"
-            )
+            previous_frame = current_frame
 
-            print(
-                f"📊 信頼度 : {confidence}%"
-            )
+        except Exception as e:
+            print("推定処理エラー:", e)
+            notify_server(inference_running=False)
 
-
-            # ==================================
-            # API送信用ID
-            # ==================================
-
-            sent_id = analog_id
-
-            # ==================================
-            # ログ保存
-            # ==================================
-
-            write_prediction_log(
-
-                result=result,
-
-                analog_id=analog_id,
-
-                confidence=confidence,
-
-                reason=reason,
-
-                sent_id=sent_id
-
-            )
-
-            # ==================================
-            # API送信
-            # ==================================
-
-            threading.Thread(
-
-                target=send_to_server,
-
-                args=(sent_id,),
-
-                daemon=True
-
-            ).start()
-
-            # ==================================
-            # 前回画像更新
-            # ==================================
-
-            previous_frame = (
-                current_frame
-            )
-
-        else:
-
-            print(
-                "変化なし"
-            )
-
-except KeyboardInterrupt:
-
-    print(
-        "終了します"
-    )
-
-finally:
-
-    picam2.stop()
-
-    cv2.destroyAllWindows()
-
-    print(
-        "camera stopped"
-    )
+if __name__ == "__main__":
+    try:
+        inference_loop()
+    except KeyboardInterrupt:
+        print("\n⏹️ 終了処理中...")
+        picam2.stop()
+        print("Camera stopped")
