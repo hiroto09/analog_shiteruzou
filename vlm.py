@@ -100,7 +100,15 @@ def has_changed(prev_frame, current_frame, threshold=CHANGE_THRESHOLD):
     curr_gray = cv2.cvtColor(current_frame, cv2.COLOR_RGB2GRAY)
     diff = cv2.absdiff(prev_gray, curr_gray)
     _, diff = cv2.threshold(diff, 30, 255, cv2.THRESH_BINARY)
-    return np.count_nonzero(diff) > threshold
+    
+    # 変化したピクセル数と全ピクセル数を計算
+    changed_pixels = np.count_nonzero(diff)
+    total_pixels = diff.size
+    percentage = (changed_pixels / total_pixels) * 100
+    
+    print(f"📊 画面変化: {changed_pixels:,} / {total_pixels:,} px ({percentage:.2f}%) - 閾値: {threshold:,} px")
+    
+    return changed_pixels > threshold
 
 def recognize_boardgame(image_path):
     image = Image.open(image_path)
@@ -115,7 +123,10 @@ def recognize_boardgame(image_path):
             raise RuntimeError("Geminiから応答がありません")
         except Exception as e:
             print("Geminiエラー:", e)
-            if "503" in str(e) or "429" in str(e):
+            if "503" in str(e):
+                time.sleep(300)
+                continue
+            if "429" in str(e):
                 time.sleep(3600)
                 continue
             time.sleep(600)
@@ -181,7 +192,8 @@ def inference_loop():
             notify_server(inference_running=True)
 
             image_path = "boardgame.jpg"
-            cv2.imwrite(image_path, current_frame)
+            # opencvのimwriteを使う場合、RGBをBGRに変換する必要があるため修正
+            cv2.imwrite(image_path, cv2.cvtColor(current_frame, cv2.COLOR_RGB2BGR))
 
             result = recognize_boardgame(image_path)
             analog_id, confidence, reason = parse_result(result)
