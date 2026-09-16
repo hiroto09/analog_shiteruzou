@@ -158,17 +158,40 @@ def write_prediction_log(result, analog_id, confidence, reason):
     except Exception as e:
         print("ログ保存エラー:", e)
 
-def notify_server(analog_id=None, inference_running=None):
-    payload = {}
+def notify_server(analog_id=None, inference_running=None, image_path=None):
+    """
+    ホストサーバーへステータスや推論結果・画像を送信する関数
+    画像が指定されている場合は multipart/form-data でファイル添付送信
+    """
+    data = {}
     if analog_id is not None:
-        payload["analog_id"] = analog_id
+        data["analog_id"] = str(analog_id)
     if inference_running is not None:
-        payload["inference_running"] = inference_running
+        data["inference_running"] = str(inference_running)
+
+    files = None
+    file_obj = None
 
     try:
-        session.post(HOST_API_URL, json=payload, timeout=5)
+        if image_path and os.path.exists(image_path):
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"analog_{analog_id or 'unknown'}_{timestamp}.jpg"
+            file_obj = open(image_path, "rb")
+            files = {"image": (filename, file_obj, "image/jpeg")}
+
+        # files がある場合は multipart/form-data (data=) で送信、無ければ JSON (json=) で送信
+        if files:
+            res = session.post(HOST_API_URL, data=data, files=files, timeout=10)
+        else:
+            res = session.post(HOST_API_URL, json=data, timeout=5)
+            
+        res.raise_for_status()
+        print(f"📤 サーバー通知完了 (HTTP Status: {res.status_code})")
     except requests.exceptions.RequestException as e:
         print(f"❌ サーバーへの送信失敗: {e}")
+    finally:
+        if file_obj:
+            file_obj.close()
 
 
 # =========================================================
@@ -204,8 +227,8 @@ def inference_loop():
             print(f"🎮 推定ID: {analog_id} (信頼度: {confidence}%)")
             write_prediction_log(result, analog_id, confidence, reason)
 
-            # ホストサーバーへ「推論完了・結果」を通知
-            notify_server(analog_id=analog_id, inference_running=False)
+            # ホストサーバーへ「推論完了・結果・撮影画像」を通知
+            notify_server(analog_id=analog_id, inference_running=False, image_path=image_path)
 
             previous_frame = current_frame
 
