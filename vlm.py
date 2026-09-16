@@ -32,6 +32,13 @@ LOG_DIR = "logs"
 LOG_FILE = os.path.join(LOG_DIR, "analog_prediction.log")
 os.makedirs(LOG_DIR, exist_ok=True)
 
+# フォールバック用モデルリスト（優先順位順）
+FALLBACK_MODELS = [
+    "gemini-flash-latest",
+    "gemini-3.5-flash-lite",
+    "gemini-3.5-flash",
+]
+
 
 # =========================================================
 # ゲーム一覧 & Prompt
@@ -111,25 +118,50 @@ def has_changed(prev_frame, current_frame, threshold=CHANGE_THRESHOLD):
     return changed_pixels > threshold
 
 def recognize_boardgame(image_path):
+    """
+    Gemini APIを呼び出し、503エラー時には次のモデルへフォールバックして再試行する
+    """
     image = Image.open(image_path)
+    
     while True:
-        try:
-            response = client.models.generate_content(
-                model="gemini-flash-latest",
-                contents=[image, PROMPT]
-            )
-            if response.text:
-                return response.text
-            raise RuntimeError("Geminiから応答がありません")
-        except Exception as e:
-            print("Geminiエラー:", e)
-            if "503" in str(e):
-                time.sleep(300)
-                continue
-            if "429" in str(e):
-                time.sleep(3600)
-                continue
-            time.sleep(600)
+        for model_name in FALLBACK_MODELS:
+            try:
+                print(f"🤖 Gemini 推論中 (モデル: {model_name})...")
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=[image, PROMPT]
+                )
+                if response.text:
+                    print(f"✅ Gemini 応答受信用 (モデル: {model_name})")
+                    return response.text
+                
+                raise RuntimeError(f"Gemini({model_name})から応答本文がありません")
+
+            except Exception as e:
+                err_msg = str(e)
+                print(f"❌ Geminiエラー ({model_name}): {err_msg}")
+
+                # 503 (Service Unavailable / 高負荷) の場合は次のモデルで即時再試行
+                if "503" in err_msg:
+                    print(f"🔄 503エラーを検知。別のモデルに切り替えます...")
+                    time.sleep(2)  # 連続アクセス負荷軽減のための微少ウェイト
+                    continue
+
+                # 429 (Too Many Requests / レート制限) の場合はモデルを変えても解決しないため1時間待機
+                if "429" in err_msg:
+                    print("⚠️ 429エラー(レート制限)が発生。1時間待機します...")
+                    time.sleep(3600)
+                    break  # ループを抜けて最初(第1候補)からやり直し
+
+                # その他の未知のエラーの場合
+                print("⚠️ 10分待機後に再試行します...")
+                time.sleep(600)
+                break
+
+        else:
+            # FALLBACK_MODELS 内の全モデルで503エラーなどが起き、breakされずに一巡した場合
+            print("⚠️ すべてのモデルで失敗しました。5分待機後に最初のモデルから再試行します...")
+            time.sleep(300)
 
 def parse_result(result):
     analog_id, confidence, reason = "0", 0, ""
