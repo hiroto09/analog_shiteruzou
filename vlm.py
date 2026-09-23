@@ -114,8 +114,9 @@ PROMPT = create_prompt()
 # =========================================================
 
 picam2 = Picamera2()
+# BGR888 で取得するように設定変更
 config = picam2.create_preview_configuration(
-    main={"size": (640, 640), "format": "RGB888"}
+    main={"size": (640, 640), "format": "BGR888"}
 )
 picam2.configure(config)
 picam2.start()
@@ -137,8 +138,9 @@ def safe_capture_array():
         return picam2.capture_array()
 
 def has_changed(prev_frame, current_frame, threshold=CHANGE_THRESHOLD):
-    prev_gray = cv2.cvtColor(prev_frame, cv2.COLOR_RGB2GRAY)
-    curr_gray = cv2.cvtColor(current_frame, cv2.COLOR_RGB2GRAY)
+    # current_frame, prev_frame は BGR 形式のため cv2.COLOR_BGR2GRAY に変更
+    prev_gray = cv2.cvtColor(prev_frame, cv2.COLOR_BGR2GRAY)
+    curr_gray = cv2.cvtColor(current_frame, cv2.COLOR_BGR2GRAY)
     diff = cv2.absdiff(prev_gray, curr_gray)
     _, diff = cv2.threshold(diff, 30, 255, cv2.THRESH_BINARY)
     
@@ -161,7 +163,6 @@ def recognize_boardgame(image_path):
         for model_name in FALLBACK_MODELS:
             try:
                 print(f"🤖 Gemini 推論中 (モデル: {model_name})...")
-                # timeout を指定して API 呼び出しが応答なしでハングするのを防止
                 response = client.models.generate_content(
                     model=model_name,
                     contents=[image, PROMPT],
@@ -177,25 +178,21 @@ def recognize_boardgame(image_path):
                 err_msg = str(e)
                 print(f"❌ Geminiエラー ({model_name}): {err_msg}")
 
-                # 503 (Service Unavailable / 高負荷) または タイムアウト の場合は次のモデルで即時再試行
                 if "503" in err_msg or "timeout" in err_msg.lower():
                     print(f"🔄 503エラーまたはタイムアウトを検知。別のモデルに切り替えます...")
-                    time.sleep(2)  # 連続アクセス負荷軽減のための微少ウェイト
+                    time.sleep(2)
                     continue
 
-                # 429 (Too Many Requests / レート制限) の場合はモデルを変えても解決しないため1時間待機
                 if "429" in err_msg:
                     print("⚠️ 429エラー(レート制限)が発生。1時間待機します...")
                     time.sleep(3600)
-                    break  # ループを抜けて最初(第1候補)からやり直し
+                    break
 
-                # その他の未知のエラーの場合
                 print("⚠️ 10分待機後に再試行します...")
                 time.sleep(600)
                 break
 
         else:
-            # FALLBACK_MODELS 内の全モデルで失敗し、breakされずに一巡した場合
             print("⚠️ すべてのモデルで失敗しました。5分待機後に最初のモデルから再試行します...")
             time.sleep(300)
 
@@ -227,10 +224,6 @@ def write_prediction_log(result, analog_id, confidence, reason):
         print("ログ保存エラー:", e)
 
 def notify_server(analog_id=None, inference_running=None, image_path=None):
-    """
-    ホストサーバーへステータスや推論結果・画像を送信する関数
-    画像が指定されている場合は multipart/form-data でファイル添付送信
-    """
     data = {}
     if analog_id is not None:
         data["analog_id"] = str(analog_id)
@@ -247,7 +240,6 @@ def notify_server(analog_id=None, inference_running=None, image_path=None):
             file_obj = open(image_path, "rb")
             files = {"image": (filename, file_obj, "image/jpeg")}
 
-        # files がある場合は multipart/form-data (data=) で送信、無ければ JSON (json=) で送信
         if files:
             res = session.post(HOST_API_URL, data=data, files=files, timeout=HTTP_TIMEOUT)
         else:
@@ -283,8 +275,8 @@ def inference_loop():
             notify_server(inference_running=True)
 
             image_path = "boardgame.jpg"
-            # opencvのimwriteを使う場合、RGBをBGRに変換する必要があるため修正
-            cv2.imwrite(image_path, cv2.cvtColor(current_frame, cv2.COLOR_RGB2BGR))
+            # BGRで取得されているため、変換なしでそのまま保存
+            cv2.imwrite(image_path, current_frame)
 
             result = recognize_boardgame(image_path)
             analog_id, confidence, reason = parse_result(result)
