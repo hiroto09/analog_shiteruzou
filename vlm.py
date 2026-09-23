@@ -66,7 +66,6 @@ FALLBACK_MODELS = [
 
 # タイムアウト時間設定 (秒)
 HTTP_TIMEOUT = 10
-GEMINI_TIMEOUT = 180
 CAMERA_TIMEOUT = 10
 
 
@@ -77,7 +76,6 @@ CAMERA_TIMEOUT = 10
 def write_error_log(error_type, model_name, detail=""):
     """
     429 / 503 エラー発生時に日時・エラー種別・モデル名をログファイルへ追記
-    出力例: [2026-09-23 19:05:01] ERROR: 503 | MODEL: gemini-flash-latest | DETAIL: Service Unavailable
     """
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     log_line = f"[{timestamp}] ERROR: {error_type} | MODEL: {model_name}"
@@ -186,8 +184,7 @@ def recognize_boardgame(image_path):
                 print(f"🤖 Gemini 推論中 (モデル: {model_name})...")
                 response = client.models.generate_content(
                     model=model_name,
-                    contents=[image, PROMPT],
-                    config={"timeout": GEMINI_TIMEOUT}
+                    contents=[image, PROMPT]
                 )
                 if response.text:
                     print(f"✅ Gemini 応答受信用 (モデル: {model_name})")
