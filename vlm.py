@@ -135,9 +135,8 @@ PROMPT = create_prompt()
 # =========================================================
 
 picam2 = Picamera2()
-# BGR888 で取得するように設定
 config = picam2.create_preview_configuration(
-    main={"size": (640, 640), "format": "BGR888"}
+    main={"size": (640, 640), "format": "RGB888"}
 )
 picam2.configure(config)
 picam2.start()
@@ -154,9 +153,11 @@ CONFIDENCE_THRESHOLD = 80
 # =========================================================
 
 def safe_capture_array():
-    """タイムアウト保護付きでカメラから画像を取得"""
+    """タイムアウト保護付きでカメラから画像を取得し、OpenCV用にBGR変換して返す"""
     with timeout(CAMERA_TIMEOUT):
-        return picam2.capture_array()
+        frame = picam2.capture_array()
+        # Picamera2から取得したRGB配列をOpenCV期待値(BGR)に変換して青被りを防ぐ
+        return cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
 
 def has_changed(prev_frame, current_frame, threshold=CHANGE_THRESHOLD):
     prev_gray = cv2.cvtColor(prev_frame, cv2.COLOR_BGR2GRAY)
