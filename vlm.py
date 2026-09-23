@@ -135,7 +135,6 @@ PROMPT = create_prompt()
 # =========================================================
 
 picam2 = Picamera2()
-# AIやPILが期待する RGB888 に完全統一
 config = picam2.create_preview_configuration(
     main={"size": (640, 640), "format": "RGB888"}
 )
@@ -154,12 +153,13 @@ CONFIDENCE_THRESHOLD = 80
 # =========================================================
 
 def safe_capture_array():
-    """タイムアウト保護付きでカメラから画像を取得 (RGB配列)"""
+    """タイムアウト保護付きでカメラから画像を取得し、RとBのチャンネルを入れ替える"""
     with timeout(CAMERA_TIMEOUT):
-        return picam2.capture_array()
+        frame = picam2.capture_array()
+        # チャンネル軸 (R, G, B) を反転させて (B, G, R) にスワップ
+        return frame[:, :, ::-1]
 
 def has_changed(prev_frame, current_frame, threshold=CHANGE_THRESHOLD):
-    # RGB配列をグレースケール化して差分比較
     prev_gray = cv2.cvtColor(prev_frame, cv2.COLOR_RGB2GRAY)
     curr_gray = cv2.cvtColor(current_frame, cv2.COLOR_RGB2GRAY)
     diff = cv2.absdiff(prev_gray, curr_gray)
@@ -289,8 +289,13 @@ def inference_loop():
         try:
             time.sleep(INTERVAL)
             current_frame = safe_capture_array()
-            cv2.imshow("Camera Preview", cv2.cvtColor(current_frame, cv2.COLOR_RGB2BGR))
             
+            # 🖼️ 取得した画像の平均RGB値をコンソールに表示
+            mean_r = np.mean(current_frame[:, :, 0])
+            mean_g = np.mean(current_frame[:, :, 1])
+            mean_b = np.mean(current_frame[:, :, 2])
+            print(f"🎨 画像の平均RGB値 -> R: {mean_r:.1f}, G: {mean_g:.1f}, B: {mean_b:.1f}")
+
             if not has_changed(previous_frame, current_frame):
                 previous_frame = current_frame
                 continue
@@ -299,7 +304,6 @@ def inference_loop():
             notify_server(inference_running=True)
 
             image_path = "boardgame.jpg"
-            # OpenCV (cv2.imwrite) を使わず、PILで直接RGB画像を保存する
             Image.fromarray(current_frame).save(image_path)
 
             result = recognize_boardgame(image_path)
