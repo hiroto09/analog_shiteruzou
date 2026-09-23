@@ -289,7 +289,8 @@ def inference_loop():
         try:
             time.sleep(INTERVAL)
             current_frame = safe_capture_array()
-
+            cv2.imshow("Camera Preview", cv2.cvtColor(current_frame, cv2.COLOR_RGB2BGR))
+            
             if not has_changed(previous_frame, current_frame):
                 previous_frame = current_frame
                 continue
