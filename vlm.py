@@ -1,88 +1,51 @@
 import os
 import time
-import signal
-import requests
 import cv2
-import numpy as np
+import requests
+import threading
+import json
 from datetime import datetime
-from dotenv import load_dotenv
-
-from google import genai
 from PIL import Image
-from picamera2 import Picamera2
+from dotenv import load_dotenv
+from google import genai
 
-# =========================================================
-# タイムアウト用ヘルパー (カメラキャプチャ等のフリーズ防止)
-# =========================================================
-
-class TimeoutException(Exception):
-    pass
-
-def timeout_handler(signum, frame):
-    raise TimeoutException("処理がタイムアウトしました")
-
-# SIGALRM を使用したタイムアウトコンテキストマネージャ (Linux / Raspberry Pi 環境用)
-class timeout:
-    def __init__(self, seconds=10):
-        self.seconds = seconds
-
-    def __enter__(self):
-        signal.signal(signal.SIGALRM, timeout_handler)
-        signal.alarm(self.seconds)
-
-    def __exit__(self, type, value, traceback):
-        signal.alarm(0)
-
-
-# =========================================================
-# .env & 環境変数チェック
-# =========================================================
-
-load_dotenv()
-
-# HOST_API_URL はホストサーバーの /analog エンドポイント
-HOST_API_URL = os.getenv("API_URL")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-ANALOG_EVENTS_API_URL = os.getenv("ANALOG_EVENTS_API_URL")
-
-if not HOST_API_URL: raise ValueError("API_URL が設定されていません")
-if not GEMINI_API_KEY: raise ValueError("GEMINI_API_KEY が設定されていません")
-if not ANALOG_EVENTS_API_URL: raise ValueError("ANALOG_EVENTS_API_URL が設定されていません")
-
-session = requests.Session()
-
-# ログ設定
+# ======================================
+# 定数・設定
+# ======================================
+PROMPT_FILE = "prompt.txt"
 LOG_DIR = "logs"
-LOG_FILE = os.path.join(LOG_DIR, "analog_prediction.log")
+LOG_FILE = os.path.join(LOG_DIR, "game_prediction.log")
 ERROR_LOG_FILE = os.path.join(LOG_DIR, "gemini_errors.log")
-os.makedirs(LOG_DIR, exist_ok=True)
 
-# フォールバック用モデルリスト（優先順位順）
+# インターバル設定（秒）
+NORMAL_INTERVAL = 180         # 通常時：3分
+CONFIRMED_INTERVAL = 3600     # ゲーム確定後：60分
+ERROR_INTERVAL = 600          # 500エラー等：10分ストップ
+RATE_LIMIT_INTERVAL = 3600    # 429エラー(Too Many Requests)時：1時間ストップ
+SWITCH_CHECK_INTERVAL = 60    # Switch状態確認間隔：60秒
+
+# フォールバック用のモデルリスト
 FALLBACK_MODELS = [
     "gemini-flash-latest",
     "gemini-3.5-flash-lite",
     "gemini-3.5-flash",
 ]
 
-# タイムアウト時間設定 (秒)
-HTTP_TIMEOUT = 10
-CAMERA_TIMEOUT = 10
-
-
-# =========================================================
-# ログ出力関数
-# =========================================================
-
-def write_error_log(error_type, model_name, detail=""):
+# ======================================
+# エラーログ書き込み関数
+# ======================================
+def write_error_log(error_type, target_or_model, detail=""):
     """
-    429 / 503 エラー発生時に日時・エラー種別・モデル名をログファイルへ追記
+    429 / 503 等のエラー発生時に日時・エラー種別・対象モデル等をログファイルへ追記
+    出力例: [2026-09-23 19:15:00] ERROR: 429 (Rate Limit) | TARGET/MODEL: gemini-flash-latest | DETAIL: ...
     """
+    os.makedirs(LOG_DIR, exist_ok=True)
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    log_line = f"[{timestamp}] ERROR: {error_type} | MODEL: {model_name}"
+    log_line = f"[{timestamp}] ERROR: {error_type} | TARGET/MODEL: {target_or_model}"
     if detail:
         log_line += f" | DETAIL: {detail}"
     log_line += "\n"
-    
+
     try:
         with open(ERROR_LOG_FILE, "a", encoding="utf-8") as f:
             f.write(log_line)
@@ -90,244 +53,475 @@ def write_error_log(error_type, model_name, detail=""):
         print("❌ エラーログ保存失敗:", e)
 
 
-# =========================================================
-# ゲーム一覧 & Prompt
-# =========================================================
+class GameRecognizerApp:
+    def __init__(self):
+        # 1. 環境変数の読み込みと検証
+        load_dotenv()
+        self.SWITCH_API_URL = self._get_env("SWITCH_API_URL")
+        self.RESULT_API_URL = self._get_env("RESULT_API_URL")
+        self.EVENTS_API_URL = self._get_env("EVENTS_API_URL")
+        self.GEMINI_API_KEY = self._get_env("GEMINI_API_KEY")
 
-GAME_MAP = {"0": "何もしてない"}
-
-def get_game_map():
-    global GAME_MAP
-    try:
-        print("🎲 ゲーム一覧を取得しています...")
-        response = session.get(ANALOG_EVENTS_API_URL, params={"game_type": "analog"}, timeout=HTTP_TIMEOUT)
-        response.raise_for_status()
+        # 2. 初期化
+        self.client = genai.Client(api_key=self.GEMINI_API_KEY)
+        self.prompt = self._create_prompt()
+        self.capture = self._open_camera()
         
-        games = response.json()["data"]
-        new_game_map = {"0": "何もしてない"}
-        for game in games:
-            new_game_map[str(game["ID"])] = game["Name"]
+        os.makedirs(LOG_DIR, exist_ok=True)
+        cv2.namedWindow("Preview", cv2.WINDOW_NORMAL)
+        cv2.resizeWindow("Preview", 960, 540)
+
+        # 3. 状態管理変数
+        self.last_packet = False
+        self.inference_active = False
+        self.inference_confirmed = False
+        self.last_prediction_id = None
+        self.same_prediction_count = 0
+        self.next_action_time = 0
+        self.last_switch_check_time = 0  # Switch状態確認用のタイマー
+
+        # Geminiスレッド用
+        self.gemini_running = False
+        self.gemini_result = None
+        self.gemini_frame = None       # 推論に使用した画像フレーム
+        self.gemini_error_code = None  # エラー発生時のステータスコードを保持
+        self.gemini_lock = threading.Lock()
+
+    def _get_env(self, key):
+        """環境変数を取得し、存在しない場合はエラーを出す"""
+        val = os.getenv(key)
+        if not val:
+            raise ValueError(f"{key} が設定されていません")
+        return val
+
+    # ======================================
+    # 初期化関連
+    # ======================================
+    def _get_game_candidates(self):
+        """APIからdigitalゲーム一覧を取得して文字列として返す"""
+        try:
+            response = requests.get(self.EVENTS_API_URL, params={"game_type": "digital"}, timeout=10)
+            if response.status_code in [429, 503]:
+                write_error_log(f"{response.status_code} HTTP Error", "EVENTS_API_URL", response.text[:100])
+            response.raise_for_status()
+            games = response.json()["data"]
+
+            print("🎮 digitalゲーム候補をAPIから取得しました")
+            return "\n".join(f'    "{game["ID"]}" : "{game["Name"]}"' for game in games)
+        except Exception as e:
+            err_str = str(e)
+            if "429" in err_str or "503" in err_str:
+                err_type = "429 Rate Limit" if "429" in err_str else "503 Service Unavailable"
+                write_error_log(err_type, "EVENTS_API_URL", err_str[:100])
+            print(f"❌ digitalゲーム候補の取得に失敗しました: {e}")
+            return None
+
+    def _create_prompt(self):
+        """Promptを作成する"""
+        if not os.path.exists(PROMPT_FILE):
+            raise FileNotFoundError(f"{PROMPT_FILE} が見つかりません")
+
+        with open(PROMPT_FILE, "r", encoding="utf-8") as f:
+            prompt_template = f.read()
+
+        candidates = self._get_game_candidates()
+        if candidates is None:
+            raise RuntimeError("digitalゲーム候補を取得できないため、Gemini推論を実行できません")
+
+        print("✅ prompt.txt を読み込み、Promptを作成しました")
+        return prompt_template.replace("{GAME_CANDIDATES}", candidates)
+
+    def _open_camera(self):
+        """カメラを開く"""
+        for i in range(3):
+            cap = cv2.VideoCapture(i)
+            if cap.isOpened():
+                print(f"✅ カメラ{i}に接続しました")
+                return cap
+            cap.release()
+        raise RuntimeError("❌ カメラが見つかりません")
+
+    # ======================================
+    # 通信・外部操作
+    # ======================================
+    def _capture_image(self):
+        """カメラから画像を1フレーム取得する（切断時は再接続）"""
+        ret, frame = self.capture.read()
+        if ret:
+            # OpenCV (cv2.VideoCapture) はデフォルトでBGRで読み込むため変換は不要
+            return frame
+
+        print("⚠️ カメラ再接続中...")
+        self.capture.release()
+        time.sleep(2)
+        self.capture = self._open_camera()
+        ret, frame = self.capture.read()
+        
+        if not ret:
+            raise RuntimeError("❌ 画像取得失敗")
             
-        GAME_MAP = new_game_map
-        print("✅ ゲーム一覧取得完了")
-    except Exception as e:
-        print("❌ ゲーム一覧取得エラー:", e)
+        # 再接続時もそのまま返す
+        return frame
 
-get_game_map()
+    def _get_switch_state(self):
+        """SwitchのON/OFF状態をAPIから取得 (packet, status_code)"""
+        try:
+            response = requests.get(self.SWITCH_API_URL, timeout=5)
+            if response.status_code in [429, 503]:
+                write_error_log(f"{response.status_code} HTTP Error", "SWITCH_API_URL", response.text[:100])
+            response.raise_for_status()
+            data = response.json()
+            if "packet" not in data:
+                raise ValueError("Switch APIレスポンスにpacketがありません")
+            return bool(data["packet"]), 200
+        except requests.RequestException as e:
+            code = e.response.status_code if hasattr(e, 'response') and e.response is not None else 500
+            err_str = str(e)
+            if code in [429, 503] or "429" in err_str or "503" in err_str:
+                err_type = "429 Rate Limit" if (code == 429 or "429" in err_str) else "503 Service Unavailable"
+                write_error_log(err_type, "SWITCH_API_URL", err_str[:100])
+            print(f"❌ Switch状態取得エラー: {e}")
+            return None, code
+        except Exception as e:
+            print(f"❌ Switch状態取得エラー: {e}")
+            return None, 500
 
-client = genai.Client(api_key=GEMINI_API_KEY)
-PROMPT_FILE = "prompt.txt"
+    def _send_result(self, class_id, frame=None):
+        """推定結果と画像をAPIに送信し (Success(bool), status_code) を返す"""
+        try:
+            print(f"\n📤 結果送信 (class_id: {class_id})")
+            
+            data = {"class_id": str(class_id)}
+            files = None
 
-if not os.path.exists(PROMPT_FILE):
-    raise FileNotFoundError(f"{PROMPT_FILE} が見つかりません")
+            if frame is not None:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = f"{class_id}_{timestamp}.jpg"
+                _, img_encoded = cv2.imencode(".jpg", frame)
+                files = {
+                    "image": (filename, img_encoded.tobytes(), "image/jpeg")
+                }
 
-def create_prompt():
-    with open(PROMPT_FILE, "r", encoding="utf-8") as f:
-        prompt_template = f.read()
-    candidates = "\n".join(f'    "{gid}": "{gname}",' for gid, gname in GAME_MAP.items())
-    return prompt_template.replace("{GAME_CANDIDATES}", candidates)
+            response = requests.post(self.RESULT_API_URL, data=data, files=files, timeout=15)
+            if response.status_code in [429, 503]:
+                write_error_log(f"{response.status_code} HTTP Error", "RESULT_API_URL", response.text[:100])
 
-PROMPT = create_prompt()
+            print(f"HTTP Status: {response.status_code}, Response: {response.text}")
+            response.raise_for_status()
+            return True, response.status_code
+        except requests.RequestException as e:
+            print(f"❌ 結果送信エラー: {e}")
+            code = e.response.status_code if hasattr(e, 'response') and e.response is not None else 500
+            err_str = str(e)
+            if code in [429, 503] or "429" in err_str or "503" in err_str:
+                err_type = "429 Rate Limit" if (code == 429 or "429" in err_str) else "503 Service Unavailable"
+                write_error_log(err_type, "RESULT_API_URL", err_str[:100])
+            return False, code
 
+    def _log_prediction(self, result, class_id, confidence, reason):
+        """結果をログファイルに保存"""
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        try:
+            with open(LOG_FILE, "a", encoding="utf-8") as f:
+                f.write("========================================\n")
+                f.write(f"日時: {timestamp}\nid: {class_id}\n信頼度: {confidence}\n根拠: {reason}\n")
+                f.write(f"Gemini生回答:\n{result.strip() if result else 'Geminiから回答なし'}\n")
+                f.write("========================================\n\n")
+            print(f"📝 ログ保存: {LOG_FILE}")
+        except Exception as e:
+            print(f"⚠️ ログ保存エラー: {e}")
 
-# =========================================================
-# Camera & 推定設定
-# =========================================================
+    # ======================================
+    # Gemini 推論処理
+    # ======================================
+    def _recognize_boardgame_task(self, frame):
+        """別スレッドで実行されるGemini推論の実体"""
+        # ここではBGR（正常化済み）のフレームをPILが要求するRGBに変換してGeminiに送る
+        image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        final_error_code = 500
 
-picam2 = Picamera2()
-config = picam2.create_preview_configuration(
-    main={"size": (640, 640), "format": "RGB888"}
-)
-picam2.configure(config)
-picam2.start()
-time.sleep(2)
-print("📷 Camera started")
-
-INTERVAL = 60
-CHANGE_THRESHOLD = 200000
-CONFIDENCE_THRESHOLD = 80
-
-
-# =========================================================
-# 推論・ヘルパー関数
-# =========================================================
-
-def safe_capture_array():
-    """タイムアウト保護付きでカメラから画像を取得し、OpenCV用にBGR変換して返す"""
-    with timeout(CAMERA_TIMEOUT):
-        frame = picam2.capture_array()
-        # Picamera2から取得したRGB配列をOpenCV期待値(BGR)に変換して青被りを防ぐ
-        return cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-
-def has_changed(prev_frame, current_frame, threshold=CHANGE_THRESHOLD):
-    prev_gray = cv2.cvtColor(prev_frame, cv2.COLOR_BGR2GRAY)
-    curr_gray = cv2.cvtColor(current_frame, cv2.COLOR_BGR2GRAY)
-    diff = cv2.absdiff(prev_gray, curr_gray)
-    _, diff = cv2.threshold(diff, 30, 255, cv2.THRESH_BINARY)
-    
-    changed_pixels = np.count_nonzero(diff)
-    total_pixels = diff.size
-    percentage = (changed_pixels / total_pixels) * 100
-    
-    print(f"📊 画面変化: {changed_pixels:,} / {total_pixels:,} px ({percentage:.2f}%) - 閾値: {threshold:,} px")
-    
-    return changed_pixels > threshold
-
-def recognize_boardgame(image_path):
-    """
-    Gemini APIを呼び出し、エラー時にはログ出力を行いつつモデル変更・再試行
-    """
-    image = Image.open(image_path)
-    
-    while True:
         for model_name in FALLBACK_MODELS:
             try:
                 print(f"🤖 Gemini 推論中 (モデル: {model_name})...")
-                response = client.models.generate_content(
+                response = self.client.models.generate_content(
                     model=model_name,
-                    contents=[image, PROMPT]
+                    contents=[image, self.prompt]
                 )
-                if response.text:
-                    print(f"✅ Gemini 応答受信用 (モデル: {model_name})")
-                    return response.text
+                print(f"✅ Gemini API応答受信 (モデル: {model_name})")
                 
-                raise RuntimeError(f"Gemini({model_name})から応答本文がありません")
+                with self.gemini_lock:
+                    if not response.text:
+                        print(f"⚠️ {model_name} から回答がありません")
+                        self.gemini_error_code = 500
+                        write_error_log("Empty Response", model_name, "Gemini text response was empty")
+                    else:
+                        self.gemini_result = response.text
+                        self.gemini_frame = frame
+                    self.gemini_running = False
+                return
 
             except Exception as e:
-                err_msg = str(e)
-                print(f"❌ Geminiエラー ({model_name}): {err_msg}")
+                error_str = str(e)
+                code = 500
+                
+                if "429" in error_str:
+                    code = 429
+                    write_error_log("429 (Rate Limit Exceeded)", model_name, error_str[:100])
+                elif "503" in error_str:
+                    code = 503
+                    write_error_log("503 (Service Unavailable)", model_name, error_str[:100])
+                else:
+                    if hasattr(e, "code"): code = e.code
+                    elif hasattr(e, "status_code"): code = e.status_code
+                    write_error_log(f"Gemini Error ({code})", model_name, error_str[:100])
 
-                # --- 429 エラーの記録と処理 ---
-                if "429" in err_msg:
-                    write_error_log("429 (Rate Limit Exceeded)", model_name, err_msg[:100])
-                    print("⚠️ 429エラー(レート制限)が発生。1時間待機します...")
-                    time.sleep(3600)
-                    break  # ループを抜けて最初からやり直し
+                print(f"❌ Geminiエラー ({model_name}): {error_str} (Code: {code})")
+                final_error_code = code
 
-                # --- 503 または タイムアウトの記録と処理 ---
-                if "503" in err_msg or "timeout" in err_msg.lower():
-                    err_type = "503 (Service Unavailable)" if "503" in err_msg else "Timeout"
-                    write_error_log(err_type, model_name, err_msg[:100])
-                    print(f"🔄 {err_type} を検知。別のモデルに切り替えます...")
+                if code == 503:
+                    print(f"🔄 503エラーを検知しました。別のモデルで再試行します...")
                     time.sleep(2)
                     continue
+                else:
+                    break
 
-                # その他のエラー
-                write_error_log("Other Error", model_name, err_msg[:100])
-                print("⚠️ 10分待機後に再試行します...")
-                time.sleep(600)
-                break
+        print("❌ すべてのモデルで推論に失敗したか、回復不能なエラーが発生しました。")
+        with self.gemini_lock:
+            self.gemini_error_code = final_error_code
+            self.gemini_running = False
 
-        else:
-            print("⚠️ すべてのモデルで失敗しました。5分待機後に最初のモデルから再試行します...")
-            time.sleep(300)
+    def start_gemini_inference(self, frame):
+        """推論スレッドの開始"""
+        with self.gemini_lock:
+            if self.gemini_running:
+                return False
+            self.gemini_running = True
+            self.gemini_result = None
+            self.gemini_frame = None
+            self.gemini_error_code = None
 
-def parse_result(result):
-    analog_id, confidence, reason = "0", 0, ""
-    if not result: return analog_id, confidence, reason
-    for line in result.splitlines():
-        line = line.strip()
-        if line.lower().startswith("id"):
-            try: analog_id = line.split(":", 1)[1].strip()
-            except: pass
-        elif "信頼度" in line:
-            try: confidence = int(line.split(":", 1)[1].replace("%", "").strip())
-            except: pass
-        elif "根拠" in line:
-            try: reason = line.split(":", 1)[1].strip()
-            except: pass
-    return analog_id, confidence, reason
+        print("\n🔍 ゲーム推定開始...")
+        threading.Thread(target=self._recognize_boardgame_task, args=(frame,), daemon=True).start()
+        return True
 
-def write_prediction_log(result, analog_id, confidence, reason):
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    try:
-        with open(LOG_FILE, "a", encoding="utf-8") as f:
-            f.write("========================================\n")
-            f.write(f"日時: {timestamp}\nid: {analog_id}\n信頼度: {confidence}%\n根拠: {reason}\n")
-            f.write("Gemini生回答:\n" + (result.strip() if result else "なし") + "\n")
-            f.write("========================================\n\n")
-    except Exception as e:
-        print("ログ保存エラー:", e)
+    def get_gemini_result_if_done(self):
+        """推論が完了していれば結果と画像フレームを返す (result, error_code, frame)"""
+        with self.gemini_lock:
+            if self.gemini_running:
+                return None, None, None
+            if self.gemini_error_code is not None:
+                err_code = self.gemini_error_code
+                self.gemini_error_code = None
+                return None, err_code, None
+            if self.gemini_result is not None:
+                res = self.gemini_result
+                frame = self.gemini_frame
+                self.gemini_result = None
+                self.gemini_frame = None
+                return res, None, frame
+        return None, None, None
 
-def notify_server(analog_id=None, inference_running=None, image_path=None):
-    data = {}
-    if analog_id is not None:
-        data["analog_id"] = str(analog_id)
-    if inference_running is not None:
-        data["inference_running"] = str(inference_running)
+    def parse_gemini_result(self, result):
+        """JSONまたはテキストから結果を抽出"""
+        if not result:
+            return None, None, None
 
-    files = None
-    file_obj = None
+        text = result.strip()
+        if text.startswith("```"):
+            lines = text.splitlines()
+            if len(lines) >= 3:
+                text = "\n".join(lines[1:-1])
 
-    try:
-        if image_path and os.path.exists(image_path):
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"analog_{analog_id or 'unknown'}_{timestamp}.jpg"
-            file_obj = open(image_path, "rb")
-            files = {"image": (filename, file_obj, "image/jpeg")}
-
-        if files:
-            res = session.post(HOST_API_URL, data=data, files=files, timeout=HTTP_TIMEOUT)
-        else:
-            res = session.post(HOST_API_URL, json=data, timeout=HTTP_TIMEOUT)
-            
-        res.raise_for_status()
-        print(f"📤 サーバー通知完了 (HTTP Status: {res.status_code})")
-    except requests.exceptions.RequestException as e:
-        print(f"❌ サーバーへの送信失敗: {e}")
-    finally:
-        if file_obj:
-            file_obj.close()
-
-
-# =========================================================
-# メインループ
-# =========================================================
-
-def inference_loop():
-    previous_frame = safe_capture_array()
-    print("🟢 監視開始")
-
-    while True:
         try:
-            time.sleep(INTERVAL)
-            current_frame = safe_capture_array()
+            data = json.loads(text)
+            return int(data.get("id")), data.get("confidence"), data.get("reason")
+        except (json.JSONDecodeError, ValueError, TypeError):
+            pass
 
-            if not has_changed(previous_frame, current_frame):
-                previous_frame = current_frame
-                continue
+        class_id, confidence, reason = None, None, None
+        for line in result.splitlines():
+            line_lower = line.strip().lower()
+            if line_lower.startswith("id:") or line_lower.startswith("id："):
+                try:
+                    val = line.split(":", 1)[1] if ":" in line else line.split("：", 1)[1]
+                    class_id = int(val.strip())
+                except (ValueError, IndexError):
+                    pass
+            elif line_lower.startswith("信頼度:") or line_lower.startswith("信頼度："):
+                try:
+                    confidence = line.split(":", 1)[1] if ":" in line else line.split("：", 1)[1]
+                except IndexError:
+                    pass
+            elif line_lower.startswith("根拠:") or line_lower.startswith("根拠："):
+                try:
+                    reason = line.split(":", 1)[1] if ":" in line else line.split("：", 1)[1]
+                except IndexError:
+                    pass
+
+        return class_id, confidence.strip() if confidence else None, reason.strip() if reason else None
+
+    # ======================================
+    # 状態管理・メインロジック
+    # ======================================
+    def reset_prediction_state(self):
+        self.inference_active = False
+        self.inference_confirmed = False
+        self.last_prediction_id = None
+        self.same_prediction_count = 0
+        self.next_action_time = 0
+        print("🔄 推論状態をリセットしました")
+
+    def schedule_next(self, interval):
+        self.next_action_time = time.time() + interval
+
+    def process_prediction(self, result, frame=None):
+        """処理結果のステータスを文字列で返す"""
+        class_id, confidence, reason = self.parse_gemini_result(result)
+
+        if class_id is None:
+            print("⚠️ class_idを取得できませんでした")
+            return "ERROR_500"
+
+        print("================================")
+        print(f"🎮 推定結果 | id: {class_id} | 信頼度: {confidence} | 根拠: {reason}")
+        print("================================")
+        self._log_prediction(result, class_id, confidence, reason)
+
+        # ID=0 (ゲームをしていない/メニュー画面など)
+        if class_id == 0:
+            success, code = self._send_result(0, frame)
+            if success:
+                self.last_prediction_id = 0
+                self.same_prediction_count = 0
+                self.inference_active = True  # SwitchがONの間はTrueを保持
+                self.inference_confirmed = False
+                self.schedule_next(NORMAL_INTERVAL)
+                return "SUCCESS"
+            return "ERROR_429" if code == 429 else "ERROR_500"
+
+        # 初回推定 または ID変更
+        if self.last_prediction_id != class_id:
+            if self.last_prediction_id is None or self.last_prediction_id == 0:
+                print(f"🎮 初回推定/再開始: id={class_id}")
+            else:
+                print(f"🔄 ID変更: {self.last_prediction_id} → {class_id}")
             
-            # ホストサーバーへ「推論中」を通知
-            notify_server(inference_running=True)
+            success, code = self._send_result(class_id, frame)
+            if success:
+                self.last_prediction_id = class_id
+                self.same_prediction_count = 1
+                self.inference_active = True  # SwitchがONの間はTrueを保持
+                self.schedule_next(NORMAL_INTERVAL)
+                return "SUCCESS"
+            return "ERROR_429" if code == 429 else "ERROR_500"
 
-            image_path = "boardgame.jpg"
-            cv2.imwrite(image_path, current_frame)
+        # 同じゲームID（1以上）が連続した場合
+        self.same_prediction_count += 1
+        print(f"🔁 同じID: {self.same_prediction_count}回連続")
 
-            result = recognize_boardgame(image_path)
-            analog_id, confidence, reason = parse_result(result)
+        if self.same_prediction_count >= 2:
+            print("✅ ゲームを確定しました！ ⏰ 以降は長時間待機モードになります")
+            self.inference_confirmed = True
+            self.schedule_next(CONFIRMED_INTERVAL)
+        else:
+            self.schedule_next(NORMAL_INTERVAL)
+        return "SUCCESS"
 
-            if confidence < CONFIDENCE_THRESHOLD:
-                analog_id = "0"
+    def run(self):
+        """メインループ"""
+        try:
+            while True:
+                now = time.time()
 
-            print(f"🎮 推定ID: {analog_id} (信頼度: {confidence}%)")
-            write_prediction_log(result, analog_id, confidence, reason)
+                # 1. プレビュー表示 (常にスムーズに更新)
+                frame = self._capture_image()
+                cv2.imshow("Preview", frame)
+                if cv2.waitKey(1) & 0xFF == ord("q"):
+                    break
 
-            # ホストサーバーへ「推論完了・結果・撮影画像」を通知
-            notify_server(analog_id=analog_id, inference_running=False, image_path=image_path)
+                # 2. Gemini推論中ならスキップ
+                if self.gemini_running:
+                    time.sleep(0.01)
+                    continue
 
-            previous_frame = current_frame
+                # 3. Gemini推論結果の処理
+                result, error_code, infer_frame = self.get_gemini_result_if_done()
+                if result:
+                    status = self.process_prediction(result, infer_frame)
+                    if status == "ERROR_429":
+                        print("⚠️ 429エラー(利用制限)を検知。1時間ストップします。")
+                        self.schedule_next(RATE_LIMIT_INTERVAL)
+                    elif status == "ERROR_500":
+                        print("⚠️ 500エラー(サーバーエラー)を検知。10分ストップします。")
+                        self.schedule_next(ERROR_INTERVAL)
+                    continue
+                elif error_code is not None:
+                    if error_code == 429:
+                        print("⚠️ Gemini 429エラー(高負荷/利用制限)。1時間ストップします。")
+                        self.schedule_next(RATE_LIMIT_INTERVAL)
+                    else:
+                        print(f"⚠️ Gemini エラー (Code: {error_code})。10分ストップします。")
+                        self.schedule_next(ERROR_INTERVAL)
+                    continue
 
-        except TimeoutException as e:
-            print(f"⚠️ カメラキャプチャがタイムアウトしました: {e}")
-            notify_server(inference_running=False)
-        except Exception as e:
-            print("推定処理エラー:", e)
-            notify_server(inference_running=False)
+                # 4. Switch電源状態のチェック (指定間隔ごとに実行)
+                if now - self.last_switch_check_time >= SWITCH_CHECK_INTERVAL:
+                    self.last_switch_check_time = now
+                    packet, sw_code = self._get_switch_state()
+                    
+                    if packet is None:
+                        if sw_code == 429:
+                            print("⚠️ Switch API 429エラー。1時間ストップします。")
+                            self.schedule_next(RATE_LIMIT_INTERVAL)
+                        else:
+                            print("⚠️ Switch API エラー。10分ストップします。")
+                            self.schedule_next(ERROR_INTERVAL)
+                    else:
+                        # Switch: ON -> OFF
+                        if not packet and self.last_packet:
+                            print("🔌 Switch電源OFFを検知 ⚪ id=0を送信します")
+                            success, code = self._send_result(0)
+                            if not success and code == 429:
+                                self.schedule_next(RATE_LIMIT_INTERVAL)
+                            self.reset_prediction_state()
+                            self.last_packet = False
+
+                        # Switch: OFF -> ON
+                        elif not self.last_packet and packet:
+                            print("🔄 Switch電源 ON を検知")
+                            self.reset_prediction_state()
+                            self.inference_active = True
+                            self.last_packet = packet
+                        else:
+                            self.last_packet = packet
+
+                # 5. 推論スケジュールの管理
+                if self.inference_confirmed:
+                    # 確定済みの長時間待機
+                    if now >= self.next_action_time:
+                        print("⏰ 長時間待機終了 🔍 再度ゲーム推論開始")
+                        self.inference_confirmed = False
+                        self.inference_active = True
+                        self.last_prediction_id = None
+                        self.same_prediction_count = 0
+                
+                elif self.inference_active:
+                    # 通常推論ターン (次回の予定時刻を超えていれば推論開始)
+                    if now >= self.next_action_time:
+                        self.start_gemini_inference(frame.copy())
+
+                # メインループの短時間スリープ (GUI応答性維持のため)
+                time.sleep(0.03)
+
+        except KeyboardInterrupt:
+            print("\n終了します")
+        finally:
+            if self.capture is not None:
+                self.capture.release()
+            cv2.destroyAllWindows()
+            print("カメラを解放しました")
+
 
 if __name__ == "__main__":
-    try:
-        inference_loop()
-    except KeyboardInterrupt:
-        print("\n⏹️ 終了処理中...")
-        picam2.stop()
-        print("Camera stopped")
+    app = GameRecognizerApp()
+    app.run()
