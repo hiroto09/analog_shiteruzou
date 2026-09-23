@@ -135,8 +135,9 @@ PROMPT = create_prompt()
 # =========================================================
 
 picam2 = Picamera2()
+# AIやPILが期待する RGB888 に完全統一
 config = picam2.create_preview_configuration(
-    main={"size": (640, 640), "format": "BGR888"} # ← RGB888からBGR888に変更
+    main={"size": (640, 640), "format": "RGB888"}
 )
 picam2.configure(config)
 picam2.start()
@@ -153,14 +154,14 @@ CONFIDENCE_THRESHOLD = 80
 # =========================================================
 
 def safe_capture_array():
-    """タイムアウト保護付きでカメラから画像を取得して返す"""
+    """タイムアウト保護付きでカメラから画像を取得 (RGB配列)"""
     with timeout(CAMERA_TIMEOUT):
-        # ← カメラ側でBGR設定済みのため、Python側での変換処理を削除
         return picam2.capture_array()
 
 def has_changed(prev_frame, current_frame, threshold=CHANGE_THRESHOLD):
-    prev_gray = cv2.cvtColor(prev_frame, cv2.COLOR_BGR2GRAY)
-    curr_gray = cv2.cvtColor(current_frame, cv2.COLOR_BGR2GRAY)
+    # RGB配列をグレースケール化して差分比較
+    prev_gray = cv2.cvtColor(prev_frame, cv2.COLOR_RGB2GRAY)
+    curr_gray = cv2.cvtColor(current_frame, cv2.COLOR_RGB2GRAY)
     diff = cv2.absdiff(prev_gray, curr_gray)
     _, diff = cv2.threshold(diff, 30, 255, cv2.THRESH_BINARY)
     
@@ -196,14 +197,12 @@ def recognize_boardgame(image_path):
                 err_msg = str(e)
                 print(f"❌ Geminiエラー ({model_name}): {err_msg}")
 
-                # --- 429 エラーの記録と処理 ---
                 if "429" in err_msg:
                     write_error_log("429 (Rate Limit Exceeded)", model_name, err_msg[:100])
                     print("⚠️ 429エラー(レート制限)が発生。1時間待機します...")
                     time.sleep(3600)
-                    break  # ループを抜けて最初からやり直し
+                    break 
 
-                # --- 503 または タイムアウトの記録と処理 ---
                 if "503" in err_msg or "timeout" in err_msg.lower():
                     err_type = "503 (Service Unavailable)" if "503" in err_msg else "Timeout"
                     write_error_log(err_type, model_name, err_msg[:100])
@@ -211,7 +210,6 @@ def recognize_boardgame(image_path):
                     time.sleep(2)
                     continue
 
-                # その他のエラー
                 write_error_log("Other Error", model_name, err_msg[:100])
                 print("⚠️ 10分待機後に再試行します...")
                 time.sleep(600)
@@ -300,7 +298,8 @@ def inference_loop():
             notify_server(inference_running=True)
 
             image_path = "boardgame.jpg"
-            cv2.imwrite(image_path, current_frame)
+            # OpenCV (cv2.imwrite) を使わず、PILで直接RGB画像を保存する
+            Image.fromarray(current_frame).save(image_path)
 
             result = recognize_boardgame(image_path)
             analog_id, confidence, reason = parse_result(result)
