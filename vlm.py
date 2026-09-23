@@ -54,6 +54,7 @@ session = requests.Session()
 # ログ設定
 LOG_DIR = "logs"
 LOG_FILE = os.path.join(LOG_DIR, "analog_prediction.log")
+ERROR_LOG_FILE = os.path.join(LOG_DIR, "gemini_errors.log")
 os.makedirs(LOG_DIR, exist_ok=True)
 
 # フォールバック用モデルリスト（優先順位順）
@@ -67,6 +68,28 @@ FALLBACK_MODELS = [
 HTTP_TIMEOUT = 10
 GEMINI_TIMEOUT = 60
 CAMERA_TIMEOUT = 10
+
+
+# =========================================================
+# ログ出力関数
+# =========================================================
+
+def write_error_log(error_type, model_name, detail=""):
+    """
+    429 / 503 エラー発生時に日時・エラー種別・モデル名をログファイルへ追記
+    出力例: [2026-09-23 19:05:01] ERROR: 503 | MODEL: gemini-flash-latest | DETAIL: Service Unavailable
+    """
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log_line = f"[{timestamp}] ERROR: {error_type} | MODEL: {model_name}"
+    if detail:
+        log_line += f" | DETAIL: {detail}"
+    log_line += "\n"
+    
+    try:
+        with open(ERROR_LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(log_line)
+    except Exception as e:
+        print("❌ エラーログ保存失敗:", e)
 
 
 # =========================================================
@@ -114,7 +137,7 @@ PROMPT = create_prompt()
 # =========================================================
 
 picam2 = Picamera2()
-# BGR888 で取得するように設定変更
+# BGR888 で取得するように設定
 config = picam2.create_preview_configuration(
     main={"size": (640, 640), "format": "BGR888"}
 )
@@ -138,13 +161,11 @@ def safe_capture_array():
         return picam2.capture_array()
 
 def has_changed(prev_frame, current_frame, threshold=CHANGE_THRESHOLD):
-    # current_frame, prev_frame は BGR 形式のため cv2.COLOR_BGR2GRAY に変更
     prev_gray = cv2.cvtColor(prev_frame, cv2.COLOR_BGR2GRAY)
     curr_gray = cv2.cvtColor(current_frame, cv2.COLOR_BGR2GRAY)
     diff = cv2.absdiff(prev_gray, curr_gray)
     _, diff = cv2.threshold(diff, 30, 255, cv2.THRESH_BINARY)
     
-    # 変化したピクセル数と全ピクセル数を計算
     changed_pixels = np.count_nonzero(diff)
     total_pixels = diff.size
     percentage = (changed_pixels / total_pixels) * 100
@@ -155,7 +176,7 @@ def has_changed(prev_frame, current_frame, threshold=CHANGE_THRESHOLD):
 
 def recognize_boardgame(image_path):
     """
-    Gemini APIを呼び出し、タイムアウトや503エラー時には次のモデルへフォールバックして再試行する
+    Gemini APIを呼び出し、エラー時にはログ出力を行いつつモデル変更・再試行
     """
     image = Image.open(image_path)
     
@@ -178,16 +199,23 @@ def recognize_boardgame(image_path):
                 err_msg = str(e)
                 print(f"❌ Geminiエラー ({model_name}): {err_msg}")
 
+                # --- 429 エラーの記録と処理 ---
+                if "429" in err_msg:
+                    write_error_log("429 (Rate Limit Exceeded)", model_name, err_msg[:100])
+                    print("⚠️ 429エラー(レート制限)が発生。1時間待機します...")
+                    time.sleep(3600)
+                    break  # ループを抜けて最初からやり直し
+
+                # --- 503 または タイムアウトの記録と処理 ---
                 if "503" in err_msg or "timeout" in err_msg.lower():
-                    print(f"🔄 503エラーまたはタイムアウトを検知。別のモデルに切り替えます...")
+                    err_type = "503 (Service Unavailable)" if "503" in err_msg else "Timeout"
+                    write_error_log(err_type, model_name, err_msg[:100])
+                    print(f"🔄 {err_type} を検知。別のモデルに切り替えます...")
                     time.sleep(2)
                     continue
 
-                if "429" in err_msg:
-                    print("⚠️ 429エラー(レート制限)が発生。1時間待機します...")
-                    time.sleep(3600)
-                    break
-
+                # その他のエラー
+                write_error_log("Other Error", model_name, err_msg[:100])
                 print("⚠️ 10分待機後に再試行します...")
                 time.sleep(600)
                 break
@@ -275,7 +303,6 @@ def inference_loop():
             notify_server(inference_running=True)
 
             image_path = "boardgame.jpg"
-            # BGRで取得されているため、変換なしでそのまま保存
             cv2.imwrite(image_path, current_frame)
 
             result = recognize_boardgame(image_path)
