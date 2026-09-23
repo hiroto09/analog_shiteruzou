@@ -1,5 +1,6 @@
 import os
 import time
+import signal
 import requests
 import cv2
 import numpy as np
@@ -9,6 +10,29 @@ from dotenv import load_dotenv
 from google import genai
 from PIL import Image
 from picamera2 import Picamera2
+
+# =========================================================
+# タイムアウト用ヘルパー (カメラキャプチャ等のフリーズ防止)
+# =========================================================
+
+class TimeoutException(Exception):
+    pass
+
+def timeout_handler(signum, frame):
+    raise TimeoutException("処理がタイムアウトしました")
+
+# SIGALRM を使用したタイムアウトコンテキストマネージャ (Linux / Raspberry Pi 環境用)
+class timeout:
+    def __init__(self, seconds=10):
+        self.seconds = seconds
+
+    def __enter__(self):
+        signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(self.seconds)
+
+    def __exit__(self, type, value, traceback):
+        signal.alarm(0)
+
 
 # =========================================================
 # .env & 環境変数チェック
@@ -39,6 +63,11 @@ FALLBACK_MODELS = [
     "gemini-3.5-flash",
 ]
 
+# タイムアウト時間設定 (秒)
+HTTP_TIMEOUT = 10
+GEMINI_TIMEOUT = 60
+CAMERA_TIMEOUT = 10
+
 
 # =========================================================
 # ゲーム一覧 & Prompt
@@ -50,7 +79,7 @@ def get_game_map():
     global GAME_MAP
     try:
         print("🎲 ゲーム一覧を取得しています...")
-        response = session.get(ANALOG_EVENTS_API_URL, params={"game_type": "analog"}, timeout=10)
+        response = session.get(ANALOG_EVENTS_API_URL, params={"game_type": "analog"}, timeout=HTTP_TIMEOUT)
         response.raise_for_status()
         
         games = response.json()["data"]
@@ -102,6 +131,11 @@ CONFIDENCE_THRESHOLD = 80
 # 推論・ヘルパー関数
 # =========================================================
 
+def safe_capture_array():
+    """タイムアウト保護付きでカメラから画像を取得"""
+    with timeout(CAMERA_TIMEOUT):
+        return picam2.capture_array()
+
 def has_changed(prev_frame, current_frame, threshold=CHANGE_THRESHOLD):
     prev_gray = cv2.cvtColor(prev_frame, cv2.COLOR_RGB2GRAY)
     curr_gray = cv2.cvtColor(current_frame, cv2.COLOR_RGB2GRAY)
@@ -119,7 +153,7 @@ def has_changed(prev_frame, current_frame, threshold=CHANGE_THRESHOLD):
 
 def recognize_boardgame(image_path):
     """
-    Gemini APIを呼び出し、503エラー時には次のモデルへフォールバックして再試行する
+    Gemini APIを呼び出し、タイムアウトや503エラー時には次のモデルへフォールバックして再試行する
     """
     image = Image.open(image_path)
     
@@ -127,9 +161,11 @@ def recognize_boardgame(image_path):
         for model_name in FALLBACK_MODELS:
             try:
                 print(f"🤖 Gemini 推論中 (モデル: {model_name})...")
+                # timeout を指定して API 呼び出しが応答なしでハングするのを防止
                 response = client.models.generate_content(
                     model=model_name,
-                    contents=[image, PROMPT]
+                    contents=[image, PROMPT],
+                    config={"timeout": GEMINI_TIMEOUT}
                 )
                 if response.text:
                     print(f"✅ Gemini 応答受信用 (モデル: {model_name})")
@@ -141,9 +177,9 @@ def recognize_boardgame(image_path):
                 err_msg = str(e)
                 print(f"❌ Geminiエラー ({model_name}): {err_msg}")
 
-                # 503 (Service Unavailable / 高負荷) の場合は次のモデルで即時再試行
-                if "503" in err_msg:
-                    print(f"🔄 503エラーを検知。別のモデルに切り替えます...")
+                # 503 (Service Unavailable / 高負荷) または タイムアウト の場合は次のモデルで即時再試行
+                if "503" in err_msg or "timeout" in err_msg.lower():
+                    print(f"🔄 503エラーまたはタイムアウトを検知。別のモデルに切り替えます...")
                     time.sleep(2)  # 連続アクセス負荷軽減のための微少ウェイト
                     continue
 
@@ -159,7 +195,7 @@ def recognize_boardgame(image_path):
                 break
 
         else:
-            # FALLBACK_MODELS 内の全モデルで503エラーなどが起き、breakされずに一巡した場合
+            # FALLBACK_MODELS 内の全モデルで失敗し、breakされずに一巡した場合
             print("⚠️ すべてのモデルで失敗しました。5分待機後に最初のモデルから再試行します...")
             time.sleep(300)
 
@@ -213,9 +249,9 @@ def notify_server(analog_id=None, inference_running=None, image_path=None):
 
         # files がある場合は multipart/form-data (data=) で送信、無ければ JSON (json=) で送信
         if files:
-            res = session.post(HOST_API_URL, data=data, files=files, timeout=10)
+            res = session.post(HOST_API_URL, data=data, files=files, timeout=HTTP_TIMEOUT)
         else:
-            res = session.post(HOST_API_URL, json=data, timeout=5)
+            res = session.post(HOST_API_URL, json=data, timeout=HTTP_TIMEOUT)
             
         res.raise_for_status()
         print(f"📤 サーバー通知完了 (HTTP Status: {res.status_code})")
@@ -231,13 +267,13 @@ def notify_server(analog_id=None, inference_running=None, image_path=None):
 # =========================================================
 
 def inference_loop():
-    previous_frame = picam2.capture_array()
+    previous_frame = safe_capture_array()
     print("🟢 監視開始")
 
     while True:
         try:
             time.sleep(INTERVAL)
-            current_frame = picam2.capture_array()
+            current_frame = safe_capture_array()
 
             if not has_changed(previous_frame, current_frame):
                 previous_frame = current_frame
@@ -264,6 +300,9 @@ def inference_loop():
 
             previous_frame = current_frame
 
+        except TimeoutException as e:
+            print(f"⚠️ カメラキャプチャがタイムアウトしました: {e}")
+            notify_server(inference_running=False)
         except Exception as e:
             print("推定処理エラー:", e)
             notify_server(inference_running=False)
