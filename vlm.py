@@ -291,12 +291,6 @@ def inference_loop():
         try:
             time.sleep(INTERVAL)
             current_frame = safe_capture_array()
-            
-            # 🖼️ 取得した画像の平均RGB値をコンソールに表示
-            mean_r = np.mean(current_frame[:, :, 0])
-            mean_g = np.mean(current_frame[:, :, 1])
-            mean_b = np.mean(current_frame[:, :, 2])
-            print(f"🎨 画像の平均RGB値 -> R: {mean_r:.1f}, G: {mean_g:.1f}, B: {mean_b:.1f}")
 
             if not has_changed(previous_frame, current_frame):
                 previous_frame = current_frame
