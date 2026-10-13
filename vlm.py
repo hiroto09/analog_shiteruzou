@@ -67,6 +67,7 @@ FALLBACK_MODELS = [
 # タイムアウト時間設定 (秒)
 HTTP_TIMEOUT = 10
 CAMERA_TIMEOUT = 10
+GEMINI_TIMEOUT = 180  # 3分間のタイムアウト
 
 
 # =========================================================
@@ -167,15 +168,12 @@ def has_changed(prev_frame, current_frame, threshold=CHANGE_THRESHOLD):
     
     changed_pixels = np.count_nonzero(diff)
     total_pixels = diff.size
-    percentage = (changed_pixels / total_pixels) * 100
-    
-    print(f"📊 画面変化: {changed_pixels:,} / {total_pixels:,} px ({percentage:.2f}%) - 閾値: {threshold:,} px")
     
     return changed_pixels > threshold
 
 def recognize_boardgame(image_path):
     """
-    Gemini APIを呼び出し、エラー時にはログ出力を行いつつモデル変更・再試行
+    Gemini APIを呼び出し、3分間のタイムアウト保護およびエラー時にはログ出力を行いつつモデル変更・再試行
     """
     image = Image.open(image_path)
     
@@ -183,10 +181,14 @@ def recognize_boardgame(image_path):
         for model_name in FALLBACK_MODELS:
             try:
                 print(f"🤖 Gemini 推論中 (モデル: {model_name})...")
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=[image, PROMPT]
-                )
+                
+                # 3分間のタイムアウトコンテキストでAPIを呼び出し
+                with timeout(GEMINI_TIMEOUT):
+                    response = client.models.generate_content(
+                        model=model_name,
+                        contents=[image, PROMPT]
+                    )
+                
                 if response.text:
                     print(f"✅ Gemini 応答受信用 (モデル: {model_name})")
                     return response.text
@@ -203,8 +205,8 @@ def recognize_boardgame(image_path):
                     time.sleep(3600)
                     break 
 
-                if "503" in err_msg or "timeout" in err_msg.lower():
-                    err_type = "503 (Service Unavailable)" if "503" in err_msg else "Timeout"
+                if "503" in err_msg or "timeout" in err_msg.lower() or isinstance(e, TimeoutException):
+                    err_type = "Timeout (3 mins)" if isinstance(e, TimeoutException) else ("503 (Service Unavailable)" if "503" in err_msg else "Timeout")
                     write_error_log(err_type, model_name, err_msg[:100])
                     print(f"🔄 {err_type} を検知。別のモデルに切り替えます...")
                     time.sleep(2)
@@ -300,6 +302,10 @@ def inference_loop():
                 previous_frame = current_frame
                 continue
             
+            # 推定開始時の現在時刻を取得
+            start_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            print(f"🚀 推定を開始します (時刻: {start_time_str})")
+
             # ホストサーバーへ「推論中」を通知
             notify_server(inference_running=True)
 
