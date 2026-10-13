@@ -168,6 +168,10 @@ def has_changed(prev_frame, current_frame, threshold=CHANGE_THRESHOLD):
     
     changed_pixels = np.count_nonzero(diff)
     total_pixels = diff.size
+    percentage = (changed_pixels / total_pixels) * 100
+    
+    # 画面差分のピクセル数とパーセンテージを出力
+    print(f"📊 画面変化: {changed_pixels:,} / {total_pixels:,} px ({percentage:.2f}%) - 閾値: {threshold:,} px")
     
     return changed_pixels > threshold
 
